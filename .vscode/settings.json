@@ -1,3 +1,0 @@
-{
-  "cmake.configureArgs": ["-DPython3_ROOT_DIR=/Users/burakyildiz/.pyenv/versions/miniconda3-latest"]
-}
