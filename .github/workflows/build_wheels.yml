@@ -1,0 +1,123 @@
+name: Build and upload to PyPI
+
+on:
+  release:
+    types:
+      - published
+
+jobs:
+  build_wheels:
+    name: Build wheel for ${{ matrix.python }}-${{ matrix.buildplat[1] }}
+    runs-on: ${{ matrix.buildplat[0] }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["cp310"]
+        buildplat:
+          - [ubuntu-20.04, manylinux_x86_64]
+          # - [ubuntu-20.04, musllinux_x86_64]
+          - [macos-12, macosx_x86_64]
+          - [macos-14, macosx_arm64]
+          # - [windows-2019, win_amd64]
+          # - [windows-2019, win32]
+
+    steps:
+      - uses: actions/checkout@v4.1.1
+
+      # Used to push the built wheels
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install dependencies [Windows]
+        if: startsWith(matrix.buildplat[0], 'windows')
+        shell: bash
+        run: |
+          choco install -y swig
+
+      - name: Install dependencies [macOS]
+        if: startsWith(matrix.buildplat[0], 'macOS')
+        run: |
+          brew install swig opencascade
+
+      # - name: Install dependencies [Ubuntu]
+      #   if: startsWith(matrix.buildplat[0], 'ubuntu')
+      #   run: |
+      #     sudo apt-get update
+      #     sudo apt-get install -y build-essential swig ninja-build wget cmake libglu1-mesa-dev libgl1-mesa-dev libxmu-dev libxi-dev libfreetype6-dev tk-dev rapidjson-dev git libpcre2-dev
+
+      # - name: Install OCCT [Ubuntu]
+      #   if: startsWith(matrix.buildplat[0], 'ubuntu') && steps.cache-occt.outputs.cache-hit != 'true'
+      #   continue-on-error: true
+      #   run: |
+      #     wget -q -O occt-7.7.2.tar.gz "https://git.dev.opencascade.org/gitweb/?p=occt.git;a=snapshot;h=cec1ecd0c9f3b3d2572c47035d11949e8dfa85e2;sf=tgz"
+      #     tar -zxf occt-7.7.2.tar.gz
+      #     cd occt-cec1ecd
+      #     mkdir -p build
+      #     cmake -S . -B build -DINSTALL_DIR=/opt/build/occt772 -DBUILD_RELEASE_DISABLE_EXCEPTIONS=OFF -DBUILD_MODULE_ApplicationFramew=OFF -DBUILD_MODULE_DETools=OFF -DBUILD_MODULE_DataExchange=OFF -DBUILD_MODULE_Draw=OFF -DBUILD_MODULE_Visualization=OFF -GNinja
+      #     cmake --build build
+      #     cmake --install build
+
+      # - name: Cache OCCT [Ubuntu]
+      #   if: startsWith(matrix.buildplat[0], 'ubuntu')
+      #   id: cache-occt
+      #   uses: actions/cache/restore@v4
+      #   with:
+      #     key: occt-cec1ecd-${{ matrix.buildplat[1] }}
+      #     path: /opt/build/occt772
+
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v2.17.0
+        env:
+          CIBW_BUILD: ${{ matrix.python }}-${{ matrix.buildplat[1] }}
+
+      # - name: Cache OCCT [Ubuntu]
+      #   if: startsWith(matrix.buildplat[0], 'ubuntu') && steps.cache-occt.outputs.cache-hit != 'true'
+      #   uses: actions/cache/save@v4
+      #   with:
+      #     key: occt-cec1ecd-${{ matrix.buildplat[1] }}
+      #     path: /opt/build/occt772
+
+      - uses: actions/upload-artifact@v4.3.1
+        with:
+          name: cibw-wheels-${{ matrix.python }}-${{ matrix.buildplat[1] }}
+          path: ./wheelhouse/*.whl
+
+  build_sdist:
+    name: Build source distribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4.1.1
+
+      # Used to push the built wheels
+      - uses: actions/setup-python@v5
+        with:
+          # Build sdist on lowest supported Python
+          python-version: "3.10"
+
+      - name: Build sdist
+        run: pipx run build --sdist
+
+      - uses: actions/upload-artifact@v4.3.1
+        with:
+          name: cibw-sdist
+          path: dist/*.tar.gz
+
+  upload_pypi:
+    name: Upload to pypi
+    needs: [build_wheels, build_sdist]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - name: Retrieve release distributions
+        uses: actions/download-artifact@v4
+        with:
+          # unpacks all CIBW artifacts into dist/
+          pattern: cibw-*
+          path: dist
+          merge-multiple: true
+
+      - name: Publish release distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
