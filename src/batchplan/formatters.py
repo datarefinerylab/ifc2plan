@@ -336,7 +336,7 @@ class FloorPlanImageFormatter(Formatter):
                              loc='upper left', bbox_to_anchor=(1.02, 1),
                              frameon=True, fancybox=True, shadow=True,
                              fontsize=10, title='Elements',
-                             title_fontsize=12, title_fontweight='bold')
+                             title_fontsize=12)
             legend.get_frame().set_facecolor('white')
             legend.get_frame().set_alpha(0.9)
     
