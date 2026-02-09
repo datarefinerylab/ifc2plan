@@ -59,6 +59,38 @@ class FloorPlanImageFormatter(Formatter):
             'IfcSpace': '#F8F9FA',          # Almost white for spaces
             'IfcZone': '#F1C40F',           # Yellow for zones
         }
+
+        # Room type color palette
+        self.room_type_colors = {
+            'bedroom': '#FFB6C1',           # Light pink
+            'bathroom': '#87CEEB',          # Sky blue
+            'livingroom': '#98FB98',        # Pale green
+            'study room': '#DDA0DD',        # Plum
+            'storage': '#F0E68C',           # Khaki
+            'corridor': '#E0E0E0',          # Light gray
+            'staircase': '#D8BFD8',         # Thistle
+            'elevator': '#B0C4DE',          # Light steel blue
+            'elevator shaft': '#B0C4DE',
+            'elevator hall': '#AFEEEE',     # Pale turquoise
+            'balcony': '#FFDAB9',           # Peach puff
+            'terrace': '#FFDAB9',
+            'entrance': '#F5DEB3',          # Wheat
+            'entrance hall': '#F5DEB3',
+            'circulation': '#D3D3D3',       # Light gray
+            'bike storage': '#FFE4B5',      # Moccasin
+            'service room': '#FAFAD2',      # Light goldenrod
+            'general': '#F5F5DC',           # Beige
+            'shops': '#FFE4E1',             # Misty rose
+            'scooters': '#FFFACD',          # Lemon chiffon
+            'shaft': '#C0C0C0',             # Silver
+            'server room': '#E6E6FA',       # Lavender
+            'inner courtyard': '#F0FFF0',   # Honeydew
+            'gallery': '#FFF0F5',           # Lavender blush
+            'not defined': '#FFFFFF',       # White
+            'area': '#F8F8FF',              # Ghost white
+            'room': '#FAF0E6',              # Linen
+        }
+
         self.line_weights = {
             'IfcWall': 2.0, 'IfcWallStandardCase': 2.0, 'IfcSlab': 0.5,
             'IfcColumn': 2.0, 'IfcBeam': 1.5, 'IfcDoor': 1.0, 'IfcWindow': 1.0,
@@ -67,24 +99,39 @@ class FloorPlanImageFormatter(Formatter):
         self.alphas = {
             'IfcWall': 0.9, 'IfcWallStandardCase': 0.9, 'IfcSlab': 0.3,
             'IfcColumn': 0.9, 'IfcBeam': 0.8, 'IfcDoor': 0.8, 'IfcWindow': 0.7,
-            'IfcStair': 0.8, 'IfcSpace': 0.1, 'default': 0.7
+            'IfcStair': 0.8, 'IfcSpace': 0.6, 'default': 0.7
         }
     
     def _setup_minimal_style(self):
         """Clean minimal black and white style"""
         base_color = '#2C3E50'
         light_color = '#ECF0F1'
-        
+
         self.colors = {
             'IfcWall': base_color, 'IfcWallStandardCase': base_color,
             'IfcSlab': light_color, 'IfcColumn': base_color, 'IfcBeam': base_color,
             'IfcDoor': '#95A5A6', 'IfcWindow': '#BDC3C7', 'IfcStair': base_color,
-            'IfcStairFlight': base_color, 'IfcRailing': '#95A5A6'
+            'IfcStairFlight': base_color, 'IfcRailing': '#95A5A6', 'IfcSpace': light_color
         }
+
+        # Minimal grayscale room type colors
+        self.room_type_colors = {
+            'bedroom': '#E8E8E8', 'bathroom': '#D8D8D8', 'livingroom': '#C8C8C8',
+            'study room': '#E0E0E0', 'storage': '#F0F0F0', 'corridor': '#D0D0D0',
+            'staircase': '#C0C0C0', 'elevator': '#D5D5D5', 'elevator shaft': '#D5D5D5',
+            'elevator hall': '#E5E5E5', 'balcony': '#F5F5F5', 'terrace': '#F5F5F5',
+            'entrance': '#EBEBEB', 'entrance hall': '#EBEBEB', 'circulation': '#DADADA',
+            'bike storage': '#EDEDED', 'service room': '#F2F2F2', 'general': '#F8F8F8',
+            'shops': '#E3E3E3', 'scooters': '#F7F7F7', 'shaft': '#CDCDCD',
+            'server room': '#E7E7E7', 'inner courtyard': '#FAFAFA', 'gallery': '#F9F9F9',
+            'not defined': '#FFFFFF', 'area': '#FCFCFC', 'room': '#F6F6F6',
+        }
+
         self.line_weights = {k: 1.0 for k in self.colors.keys()}
         self.line_weights['default'] = 1.0
         self.alphas = {k: 0.8 for k in self.colors.keys()}
         self.alphas['IfcSlab'] = 0.2
+        self.alphas['IfcSpace'] = 0.6
         self.alphas['default'] = 0.8
     
     def _setup_colorful_style(self):
@@ -104,11 +151,43 @@ class FloorPlanImageFormatter(Formatter):
             'IfcFurnishingElement': '#90EE90', # Light green
             'IfcSpace': '#F0F8FF',          # Alice blue
         }
+
+        # Vibrant room type colors for colorful style
+        self.room_type_colors = {
+            'bedroom': '#FFB3E6',           # Bright pink
+            'bathroom': '#66D9EF',          # Bright cyan
+            'livingroom': '#A6E57A',        # Bright lime green
+            'study room': '#E6A8FF',        # Bright lavender
+            'storage': '#FFE680',           # Bright yellow
+            'corridor': '#E0E0E0',          # Light gray
+            'staircase': '#E6B3FF',         # Bright purple
+            'elevator': '#99CCFF',          # Bright blue
+            'elevator shaft': '#99CCFF',
+            'elevator hall': '#80F5F5',     # Bright turquoise
+            'balcony': '#FFD9A3',           # Bright peach
+            'terrace': '#FFD9A3',
+            'entrance': '#FFEAB3',          # Bright cream
+            'entrance hall': '#FFEAB3',
+            'circulation': '#CCCCCC',       # Gray
+            'bike storage': '#FFECB3',      # Bright beige
+            'service room': '#FFFFB3',      # Bright lemon
+            'general': '#FFFFCC',           # Pale yellow
+            'shops': '#FFD6E0',             # Bright rose
+            'scooters': '#FFFFCC',          # Pale yellow
+            'shaft': '#CCCCCC',             # Gray
+            'server room': '#D9B3FF',       # Bright lilac
+            'inner courtyard': '#E6FFE6',   # Bright mint
+            'gallery': '#FFE6F0',           # Bright blush
+            'not defined': '#FFFFFF',       # White
+            'area': '#F0F8FF',              # Alice blue
+            'room': '#FFF5E6',              # Cream
+        }
+
         self.line_weights = {k: 1.5 for k in self.colors.keys()}
         self.line_weights['default'] = 1.5
         self.alphas = {k: 0.7 for k in self.colors.keys()}
         self.alphas['IfcSlab'] = 0.4
-        self.alphas['IfcSpace'] = 0.1
+        self.alphas['IfcSpace'] = 0.6
         self.alphas['default'] = 0.7
     
     def _setup_technical_style(self):
@@ -145,12 +224,29 @@ class FloorPlanImageFormatter(Formatter):
         self.edge_colors = {k: 'black' for k in self.colors.keys()}
         self.edge_colors['default'] = 'black'
     
-    def process(self, name: str, elements: list, polygons: List[Tuple[str, str, Polygon]]):
+    def process(self, name: str, elements: list, polygons: List[Tuple[str, str, Polygon, str]]):
         """Generate professional floor plan image"""
-        
+
         if not polygons:
             print(f"No polygons for level {name}")
             return
+
+        # Determine if we should generate both versions
+        generate_both = self.context.get('both', False)
+        colored_spaces = self.context.get('colored_spaces', False)
+
+        if generate_both:
+            # Generate black & white version first
+            self._generate_floor_plan(name, elements, polygons, colored_spaces=False, suffix='_bw')
+            # Then generate colored version
+            self._generate_floor_plan(name, elements, polygons, colored_spaces=True, suffix='_colored')
+        else:
+            # Generate single version based on colored_spaces flag
+            self._generate_floor_plan(name, elements, polygons, colored_spaces=colored_spaces, suffix='')
+
+    def _generate_floor_plan(self, name: str, elements: list, polygons: List[Tuple[str, str, Polygon, str]],
+                            colored_spaces: bool = False, suffix: str = ''):
+        """Generate a single floor plan image with specified coloring"""
         
         # Create figure with better DPI and size
         plt.style.use('default')  # Reset to clean style
@@ -159,7 +255,7 @@ class FloorPlanImageFormatter(Formatter):
         
         # Calculate bounds with better padding
         all_bounds = []
-        for elem_type, elem_name, poly in polygons:
+        for elem_type, elem_name, poly, room_type in polygons:
             if poly and not poly.is_empty:
                 all_bounds.extend(poly.bounds)
         
@@ -176,11 +272,20 @@ class FloorPlanImageFormatter(Formatter):
             ax.set_ylim(min_y - padding, max_y + padding)
         
         # Group polygons by type for better rendering order
+        # Also track room types for IfcSpace elements
         polygon_groups = {}
-        for elem_type, elem_name, poly in polygons:
+        room_type_groups = {}  # Track unique room types for legend
+
+        for elem_type, elem_name, poly, room_type in polygons:
             if elem_type not in polygon_groups:
                 polygon_groups[elem_type] = []
-            polygon_groups[elem_type].append((elem_name, poly))
+            polygon_groups[elem_type].append((elem_name, poly, room_type))
+
+            # Track room types for IfcSpace elements
+            if elem_type == 'IfcSpace' and room_type:
+                if room_type not in room_type_groups:
+                    room_type_groups[room_type] = []
+                room_type_groups[room_type].append((elem_name, poly))
         
         # Render in specific order (background to foreground)
         render_order = [
@@ -202,24 +307,28 @@ class FloorPlanImageFormatter(Formatter):
         for elem_type in render_order:
             if elem_type not in polygon_groups:
                 continue
-                
+
             color = self.colors.get(elem_type, '#95A5A6')  # Default gray
             alpha = self.alphas.get(elem_type, self.alphas['default'])
             line_weight = self.line_weights.get(elem_type, self.line_weights['default'])
-            
-            for elem_name, poly in polygon_groups[elem_type]:
+
+            for elem_name, poly, room_type in polygon_groups[elem_type]:
                 if poly is None or poly.is_empty:
                     continue
-                
+
                 # Determine edge color and fill behavior
                 if hasattr(self, 'edge_colors'):  # Technical style
                     edge_color = self.edge_colors.get(elem_type, self.edge_colors['default'])
                     fill_color = 'none'  # No fill for technical drawings
                     alpha = 0.0
                 else:
-                    edge_color = self._darken_color(color) if elem_type != 'IfcWall' else 'black'
-                    fill_color = color
-                
+                    # Use room type color for IfcSpace elements only if colored_spaces is enabled
+                    if elem_type == 'IfcSpace' and room_type and colored_spaces and hasattr(self, 'room_type_colors'):
+                        fill_color = self.room_type_colors.get(room_type, color)
+                    else:
+                        fill_color = color
+                    edge_color = self._darken_color(fill_color) if elem_type != 'IfcWall' else 'black'
+
                 if isinstance(poly, Polygon):
                     self._draw_polygon(ax, poly, fill_color, alpha, edge_color, line_weight)
                 elif isinstance(poly, MultiPolygon):
@@ -245,25 +354,26 @@ class FloorPlanImageFormatter(Formatter):
         # Better tick formatting
         ax.tick_params(axis='both', which='major', labelsize=11)
         
-        # Create professional legend
-        self._create_legend(ax, polygon_groups)
-        
+        # Create professional legend (only show room types if colored_spaces is enabled)
+        self._create_legend(ax, polygon_groups, room_type_groups if colored_spaces else {})
+
         # Add scale indicator
         self._add_scale_indicator(ax, all_bounds)
-        
+
         # Add north arrow (if space allows)
         self._add_north_arrow(ax)
-        
+
         # Tight layout with better spacing
         plt.tight_layout(pad=2.0)
-        
+
         # Save with high quality
-        output_path = self.context["output_dir"] / f"{name}_floor_plan.png"
-        plt.savefig(output_path, dpi=300, bbox_inches='tight', 
+        output_path = self.context["output_dir"] / f"{name}_floor_plan{suffix}.png"
+        plt.savefig(output_path, dpi=300, bbox_inches='tight',
                    facecolor='white', edgecolor='none')
         plt.close()
-        
-        print(f"Saved professional floor plan: {output_path}")
+
+        version_text = "colored" if colored_spaces else "black & white"
+        print(f"Saved {version_text} floor plan: {output_path}")
     
     def _draw_polygon(self, ax, poly, color, alpha, edge_color, line_weight):
         """Draw a single polygon with proper styling"""
@@ -300,45 +410,77 @@ class FloorPlanImageFormatter(Formatter):
         except:
             return 'black'
     
-    def _create_legend(self, ax, polygon_groups):
-        """Create a professional legend"""
-        # Only show legend for types that are actually present
-        present_types = list(polygon_groups.keys())
-        
-        if len(present_types) > 12:  # Too many for readable legend
-            return
-        
+    def _create_legend(self, ax, polygon_groups, room_type_groups):
+        """Create a professional legend with room types"""
         # Skip legend for technical style (line-only drawings)
         if hasattr(self, 'edge_colors'):
             return
-            
+
         legend_elements = []
         legend_labels = []
-        
-        for elem_type in present_types:
-            if elem_type in self.colors:
-                color = self.colors[elem_type]
-                alpha = self.alphas.get(elem_type, self.alphas['default'])
-                
-                # Create legend patch
-                patch = patches.Rectangle((0,0), 1, 1, 
-                                        facecolor=color, alpha=alpha,
-                                        edgecolor=self._darken_color(color),
-                                        linewidth=1)
-                legend_elements.append(patch)
-                
-                # Clean up label
-                clean_label = elem_type.replace('Ifc', '').replace('StandardCase', '')
-                legend_labels.append(clean_label)
-        
+
+        # Add room types to legend if we have room type colors
+        if hasattr(self, 'room_type_colors') and room_type_groups:
+            # Sort room types alphabetically for consistent legend
+            sorted_room_types = sorted(room_type_groups.keys())
+
+            for room_type in sorted_room_types:
+                if room_type in self.room_type_colors:
+                    color = self.room_type_colors[room_type]
+                    alpha = self.alphas.get('IfcSpace', 0.6)
+
+                    # Create legend patch
+                    patch = patches.Rectangle((0, 0), 1, 1,
+                                            facecolor=color, alpha=alpha,
+                                            edgecolor=self._darken_color(color),
+                                            linewidth=1)
+                    legend_elements.append(patch)
+
+                    # Capitalize first letter of each word for display
+                    display_label = room_type.title()
+                    legend_labels.append(display_label)
+
+        # Add other element types (non-spaces)
+        present_types = [t for t in polygon_groups.keys() if t != 'IfcSpace']
+
+        if present_types and len(present_types) <= 12:  # Don't overcrowd legend
+            # Add separator if we have both room types and other elements
+            if legend_elements:
+                legend_elements.append(patches.Rectangle((0, 0), 1, 1,
+                                                        facecolor='white',
+                                                        edgecolor='white'))
+                legend_labels.append('')  # Empty label for separator
+
+            for elem_type in present_types:
+                if elem_type in self.colors:
+                    color = self.colors[elem_type]
+                    alpha = self.alphas.get(elem_type, self.alphas['default'])
+
+                    # Create legend patch
+                    patch = patches.Rectangle((0, 0), 1, 1,
+                                            facecolor=color, alpha=alpha,
+                                            edgecolor=self._darken_color(color),
+                                            linewidth=1)
+                    legend_elements.append(patch)
+
+                    # Clean up label
+                    clean_label = elem_type.replace('Ifc', '').replace('StandardCase', '')
+                    legend_labels.append(clean_label)
+
         if legend_elements:
-            legend = ax.legend(legend_elements, legend_labels, 
+            # Determine legend title based on content
+            if room_type_groups:
+                legend_title = 'Room Types & Elements'
+            else:
+                legend_title = 'Elements'
+
+            legend = ax.legend(legend_elements, legend_labels,
                              loc='upper left', bbox_to_anchor=(1.02, 1),
                              frameon=True, fancybox=True, shadow=True,
-                             fontsize=10, title='Elements',
-                             title_fontsize=12)
+                             fontsize=9, title=legend_title,
+                             title_fontsize=11)
             legend.get_frame().set_facecolor('white')
-            legend.get_frame().set_alpha(0.9)
+            legend.get_frame().set_alpha(0.95)
     
     def _add_scale_indicator(self, ax, bounds):
         """Add a scale indicator to the plot"""
@@ -393,12 +535,12 @@ class FloorPlanImageFormatter(Formatter):
 class FloorWKTFormatter(Formatter):
     """Export floor plans as WKT (Well-Known Text) CSV files"""
     
-    def process(self, name: str, elements: list, polygons: List[Tuple[str, str, Polygon]]):
-        """Export polygons as WKT"""
+    def process(self, name: str, elements: list, polygons: List[Tuple[str, str, Polygon, str]]):
+        """Export polygons as WKT with room type information"""
         
-        data = {"type": [], "name": [], "geometry": []}
+        data = {"type": [], "name": [], "room_type": [], "geometry": []}
         
-        for elem_type, elem_name, poly in polygons:
+        for elem_type, elem_name, poly, room_type in polygons:
             if poly is None or poly.is_empty:
                 continue
                 
@@ -406,10 +548,11 @@ class FloorWKTFormatter(Formatter):
             data["geometry"].append(wkt)
             data["type"].append(elem_type)
             data["name"].append(elem_name)
+            data["room_type"].append(room_type)
         
         if data["type"]:
             df = pd.DataFrame(data)
             output_path = self.context["output_dir"] / f"{name}_floor_plan.csv"
             df.to_csv(output_path, index=False)
             print(f"Saved WKT data: {output_path} ({len(data['type'])} elements)")
-    
+        
