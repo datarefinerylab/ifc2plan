@@ -2,8 +2,9 @@ import argparse
 import glob
 from pathlib import Path
 import pandas as pd
+import ifcopenshell
 
-from geometry_engine import ShapelyTrimeshEngine
+from geometry_engine import ShapelyTrimeshEngine, IFCGeometryProcessor
 from formatters import FloorPlanImageFormatter, FloorWKTFormatter
 from ifc_processor import (
     default_filter,
@@ -40,6 +41,13 @@ def load_naming_conversion(csv_path):
         return {}
 
 
+def show_ifc_overview(ifc_path):
+    """Show overview of IFC file and exit"""
+    ifc_file = ifcopenshell.open(ifc_path)
+    processor = IFCGeometryProcessor()
+    processor.print_ifc_overview(ifc_file)
+
+
 def process_ifc_file(ifc_path, context):
     """Process a single IFC file"""
     print(f"\n{'=' * 60}")
@@ -54,10 +62,14 @@ def process_ifc_file(ifc_path, context):
     context["output_dir"] = output_dir
     context["ifc_path"] = ifc_path
 
+    # Add storey index to context if specified
+    if hasattr(context["args"], "storey") and context["args"].storey is not None:
+        context["storey_index"] = context["args"].storey
+
     try:
         # Choose processing mode
         if context["args"].space_only:
-            print("Mode: Space-only extraction (like notebook)")
+            print("Mode: Space-only extraction")
             process_storeys_space_only(context)
         else:
             print("Mode: Full geometry extraction (all elements)")
@@ -76,8 +88,14 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
+  # Show overview of IFC file (storeys, elements, etc.)
+  python extract_floor_plans.py building.ifc --overview
+
   # Extract all elements (walls, spaces, etc.) - default: professional b&w style
   python extract_floor_plans.py building.ifc --output ./output
+
+  # Extract only a specific storey (use --overview first to see storey indices)
+  python extract_floor_plans.py building.ifc --storey 0 --output ./output
 
   # Extract only IfcSpace elements with colored room types
   python extract_floor_plans.py building.ifc --space-only --naming-conversion names.csv --colored-spaces
@@ -93,9 +111,15 @@ Examples:
                         choices=["image", "wkt"],
                         help="Output formatters (space-separated list)")
 
+    # Overview mode
+    parser.add_argument("--overview", action="store_true",
+                        help="Show IFC file overview (storeys, elements, structure) and exit")
+
     # Processing mode
     parser.add_argument("--space-only", action="store_true",
                         help="Extract only IfcSpace elements (matches notebook approach)")
+    parser.add_argument("--storey", type=int, default=None,
+                        help="Process only specific storey by index (0-based). Use --overview to see available storeys")
     parser.add_argument("--naming-conversion", type=str, default=None,
                         help="CSV file with naming conversion (Dutch->English). Format: original,english")
 
@@ -121,6 +145,18 @@ Examples:
                         help="Geometric tolerance")
 
     args = parser.parse_args()
+
+    # Process IFC files
+    ifc_paths = glob.glob(args.ifc_paths)
+    if not ifc_paths:
+        print(f"No IFC files found matching: {args.ifc_paths}")
+        return
+
+    # Handle overview mode
+    if args.overview:
+        for ifc_path in ifc_paths:
+            show_ifc_overview(ifc_path)
+        return
 
     # Load naming conversion if provided
     naming_conversion = {}
@@ -150,11 +186,6 @@ Examples:
     context["formatters"] = setup_formatters(context, selected_formatters)
 
     # Process IFC files
-    ifc_paths = glob.glob(args.ifc_paths)
-    if not ifc_paths:
-        print(f"No IFC files found matching: {args.ifc_paths}")
-        return
-
     for ifc_path in ifc_paths:
         process_ifc_file(ifc_path, context)
 

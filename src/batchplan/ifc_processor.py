@@ -296,9 +296,31 @@ def process_storeys(context):
     # Process each storey
     storeys = list(model.by_type("IfcBuildingStorey"))
 
-    for s0, s1 in zip(storeys[:-1], storeys[1:]):
+    # Filter storeys if specific storey index is provided
+    if "storey_index" in context:
+        storey_index = context["storey_index"]
+        if storey_index < 0 or storey_index >= len(storeys):
+            print(f"Error: Storey index {storey_index} out of range. Available storeys: 0-{len(storeys)-1}")
+            return
+        print(f"Processing only storey [{storey_index}]: {storeys[storey_index].Name}")
+        storeys = [storeys[storey_index]]
+        # Handle the case where we only have one storey
+        if storey_index + 1 < len(list(model.by_type("IfcBuildingStorey"))):
+            storeys_next = [list(model.by_type("IfcBuildingStorey"))[storey_index + 1]]
+        else:
+            # Use a dummy elevation above current storey
+            storeys_next = [None]
+    else:
+        storeys_next = storeys[1:]
+
+    for idx, (s0, s1) in enumerate(zip(storeys, storeys_next)):
         name = s0.Name or f"Level_{s0.id()}"
-        section_height = (s0.Elevation + s1.Elevation) / 2000
+
+        if s1 is not None:
+            section_height = (s0.Elevation + s1.Elevation) / 2000
+        else:
+            # For the last storey or single storey, use elevation + 1.5m
+            section_height = s0.Elevation / 1000 + 1.5
 
         print(f"Processing storey: {name} at height {section_height:.2f}m")
 
@@ -352,6 +374,15 @@ def process_storeys_space_only(context):
 
     # Process each storey
     storeys = list(model.by_type("IfcBuildingStorey"))
+
+    # Filter storeys if specific storey index is provided
+    if "storey_index" in context:
+        storey_index = context["storey_index"]
+        if storey_index < 0 or storey_index >= len(storeys):
+            print(f"Error: Storey index {storey_index} out of range. Available storeys: 0-{len(storeys)-1}")
+            return
+        print(f"Processing only storey [{storey_index}]: {storeys[storey_index].Name}")
+        storeys = [storeys[storey_index]]
 
     for s0 in storeys:
         name = s0.Name or f"Level_{s0.id()}"

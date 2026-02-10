@@ -244,67 +244,197 @@ class ShapelyTrimeshEngine(GeometryEngine):
 
 class IFCGeometryProcessor:
     """Processor for IFC geometry using the new engine"""
-    
+
     def __init__(self, engine: GeometryEngine = None):
         self.engine = engine or ShapelyTrimeshEngine()
+
+    def get_ifc_overview(self, ifc_file) -> dict:
+        """
+        Get a high-level overview of the IFC file
+
+        Returns:
+            dict: Overview information including storeys, elements, spatial structure
+        """
+        import ifcopenshell
+
+        overview = {
+            "file_schema": ifc_file.schema,
+            "storeys": [],
+            "total_storeys": 0,
+            "total_elements": 0,
+            "element_types": {},
+            "spatial_structure": []
+        }
+
+        # Get all building storeys
+        storeys = ifc_file.by_type("IfcBuildingStorey")
+        overview["total_storeys"] = len(storeys)
+
+        for idx, storey in enumerate(storeys):
+            storey_info = {
+                "index": idx,
+                "name": storey.Name or f"Storey {idx}",
+                "long_name": storey.LongName or "",
+                "elevation": storey.Elevation if hasattr(storey, 'Elevation') else None,
+                "element_count": 0,
+                "element_types": {}
+            }
+
+            # Get elements in this storey
+            elements = []
+            if hasattr(storey, 'ContainsElements'):
+                for rel in storey.ContainsElements:
+                    if hasattr(rel, 'RelatedElements'):
+                        elements.extend(rel.RelatedElements)
+
+            storey_info["element_count"] = len(elements)
+
+            # Count element types in this storey
+            for element in elements:
+                elem_type = element.is_a()
+                storey_info["element_types"][elem_type] = storey_info["element_types"].get(elem_type, 0) + 1
+                overview["element_types"][elem_type] = overview["element_types"].get(elem_type, 0) + 1
+
+            overview["storeys"].append(storey_info)
+            overview["total_elements"] += len(elements)
+
+        # Get spatial structure
+        projects = ifc_file.by_type("IfcProject")
+        if projects:
+            overview["project_name"] = projects[0].Name or "Unnamed Project"
+
+        buildings = ifc_file.by_type("IfcBuilding")
+        if buildings:
+            overview["building_name"] = buildings[0].Name or "Unnamed Building"
+
+        return overview
+
+    def print_ifc_overview(self, ifc_file):
+        """Print a formatted overview of the IFC file"""
+        overview = self.get_ifc_overview(ifc_file)
+
+        print("\n" + "="*60)
+        print("IFC FILE OVERVIEW")
+        print("="*60)
+
+        if "project_name" in overview:
+            print(f"Project: {overview['project_name']}")
+        if "building_name" in overview:
+            print(f"Building: {overview['building_name']}")
+
+        print(f"Schema: {overview['file_schema']}")
+        print(f"\nTotal Storeys: {overview['total_storeys']}")
+        print(f"Total Elements: {overview['total_elements']}")
+
+        print(f"\nElement Types (Overall):")
+        for elem_type, count in sorted(overview['element_types'].items(), key=lambda x: x[1], reverse=True):
+            print(f"  {elem_type}: {count}")
+
+        print(f"\nStorey Details:")
+        for storey in overview['storeys']:
+            print(f"\n  [{storey['index']}] {storey['name']}")
+            if storey['long_name']:
+                print(f"      Long Name: {storey['long_name']}")
+            if storey['elevation'] is not None:
+                print(f"      Elevation: {storey['elevation']:.2f}")
+            print(f"      Elements: {storey['element_count']}")
+            if storey['element_types']:
+                print(f"      Element Types:")
+                for elem_type, count in sorted(storey['element_types'].items(), key=lambda x: x[1], reverse=True)[:5]:
+                    print(f"        {elem_type}: {count}")
+                if len(storey['element_types']) > 5:
+                    print(f"        ... and {len(storey['element_types']) - 5} more types")
+
+        print("\n" + "="*60 + "\n")
+
+    def get_storey_elements(self, ifc_file, storey_index: int) -> List:
+        """
+        Get all elements from a specific storey by index
+
+        Args:
+            ifc_file: The IFC file
+            storey_index: The index of the storey (0-based)
+
+        Returns:
+            List of IFC elements in the specified storey
+        """
+        storeys = ifc_file.by_type("IfcBuildingStorey")
+
+        if storey_index < 0 or storey_index >= len(storeys):
+            raise ValueError(f"Storey index {storey_index} out of range. Available storeys: 0-{len(storeys)-1}")
+
+        storey = storeys[storey_index]
+        elements = []
+
+        if hasattr(storey, 'ContainsElements'):
+            for rel in storey.ContainsElements:
+                if hasattr(rel, 'RelatedElements'):
+                    elements.extend(rel.RelatedElements)
+
+        return elements
     
     def process_ifc_element(self, ifc_element, ifc_file) -> Optional[trimesh.Trimesh]:
         """Convert IFC element to trimesh geometry"""
         try:
             import ifcopenshell.geom
-            
+
             # Create settings for geometry processing
             settings = ifcopenshell.geom.settings()
             settings.set(settings.USE_WORLD_COORDS, True)
             settings.set(settings.WELD_VERTICES, True)
-            
+
             # Get shape from IFC element
             shape = ifcopenshell.geom.create_shape(settings, ifc_element)
-            
+
             if shape is None:
                 return None
-            
+
             # Extract vertices and faces
             vertices = shape.geometry.verts
             faces = shape.geometry.faces
-            
+
             # Reshape vertices (they come as flat array)
             vertices = np.array(vertices).reshape(-1, 3)
             faces = np.array(faces).reshape(-1, 3)
-            
+
             # Create trimesh
             mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
-            
+
             # Apply transformation matrix if available
             if hasattr(shape, 'transformation') and shape.transformation is not None:
                 matrix = np.array(shape.transformation.matrix).reshape(4, 4).T
                 mesh.apply_transform(matrix)
-            
+
             return mesh
-            
+
         except RuntimeError as e:
             if "Failed to process shape" in str(e):
-                # Skip problematic elements and continue
-                print(f"Skipping element {getattr(ifc_element, 'GlobalId', 'Unknown')}: {e}")
+                # Skip problematic elements silently
                 return None
             raise  # Re-raise other RuntimeErrors
         except Exception as e:
-            print(f"Warning: Failed to process IFC element {getattr(ifc_element, 'GlobalId', 'Unknown')}: {e}")
+            # Fail silently, caller will track statistics
             return None
     
-    def extract_floor_plan_at_height(self, ifc_elements, ifc_file, height: float, 
+    def extract_floor_plan_at_height(self, ifc_elements, ifc_file, height: float,
                                    tolerance: float = 0.1) -> List[Polygon]:
         """Extract 2D floor plan at specified height"""
         plane_origin = (0, 0, height)
         plane_normal = (0, 0, 1)  # Z-up
-        
+
         floor_polygons = []
-        
+        total_elements = len(ifc_elements)
+        success_count = 0
+        failed_count = 0
+
         for element in ifc_elements:
             mesh = self.process_ifc_element(element, ifc_file)
             if mesh is None:
+                failed_count += 1
                 continue
-            
+
+            success_count += 1
+
             # Check if element intersects with the plane
             bounds = mesh.bounds
             if bounds[2] <= height + tolerance and bounds[5] >= height - tolerance:
@@ -312,8 +442,48 @@ class IFCGeometryProcessor:
                 polygons = self.engine.intersect_with_plane(mesh, plane_origin, plane_normal)
                 if polygons:
                     floor_polygons.extend(polygons)
-        
+
+        # Report summary
+        print(f"Processed {total_elements} elements: {success_count} succeeded, {failed_count} failed")
+
         return floor_polygons
+
+    def extract_floor_plan_for_storey(self, ifc_file, storey_index: int,
+                                     tolerance: float = 0.1) -> List[Polygon]:
+        """
+        Extract 2D floor plan for a specific storey by index
+
+        Args:
+            ifc_file: The IFC file
+            storey_index: The index of the storey (0-based)
+            tolerance: Tolerance for plane intersection
+
+        Returns:
+            List of polygons representing the floor plan
+        """
+        # Get storey information
+        storeys = ifc_file.by_type("IfcBuildingStorey")
+
+        if storey_index < 0 or storey_index >= len(storeys):
+            raise ValueError(f"Storey index {storey_index} out of range. Available storeys: 0-{len(storeys)-1}")
+
+        storey = storeys[storey_index]
+        storey_name = storey.Name or f"Storey {storey_index}"
+
+        # Get elevation for the storey
+        elevation = storey.Elevation if hasattr(storey, 'Elevation') and storey.Elevation is not None else 0.0
+
+        print(f"\nProcessing storey [{storey_index}] '{storey_name}' at elevation {elevation:.2f}")
+
+        # Get elements for this storey
+        elements = self.get_storey_elements(ifc_file, storey_index)
+
+        if not elements:
+            print(f"Warning: No elements found in storey '{storey_name}'")
+            return []
+
+        # Extract floor plan at the storey elevation
+        return self.extract_floor_plan_at_height(elements, ifc_file, elevation, tolerance)
 
 
 def create_geometry_engine() -> GeometryEngine:
