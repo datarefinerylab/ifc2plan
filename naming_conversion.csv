@@ -1,39 +1,54 @@
 original,english
 ,not defined
+Algemene,general
 Area,area
+Bergruimte,storage
+Entree,entrance
+Entreehal,entrance
+Fietsenstalling,bikes
+Lift,elevator
+Lifthal,elevator shaft
 Room,room
-TRUDO,trudo
+Service,serviceroom
+TRUDO,not defined
+Terras,balcony
+Trappenhuis,staircase
 Type,type
 WC,bathroom
+Winkels,stores
 badkamer,bathroom
 balkon,balcony
 berging,storage
-binnentuin,inner courtyard
+bergruimte,storage
+binnentuin,indoor garden
+buiten,outside
+cera,cera
+doorwaaikap,not defined
+esco,esco
+fietsenstalling,bikes
 galerij,gallery
 gang,corridor
+hal,corridor
+kast,storage
+lifthal,elevator shaft
 liftschacht,elevator shaft
+loggia,balcony
+meterkast,storage
+patio,patio
 schacht,shaft
-serverruimte,server room
+scootmobielen,scootmobiles
+serverruimte,serverroom
 shaft,shaft
 slaapkamer,bedroom
+techn.,storage
+technische,storage
+terras,balcony
 toilet,bathroom
 trappenhuis,staircase
-woonkamer,livingroom
+verkeersruimte,traffic room
+walk-in,walk-in
 wc,bathroom
-werkkamer,study room
-verkeersruimte,circulation
-Service,service room
-doorwaaikap,not defined
-lifthal,elevator hall
-Trappenhuis,staircase
-Terras,terrace
-Algemene,general
-Fietsenstalling,bike storage
-Entreehal,entrance hall
-Bergruimte,storage
-bergruimte,storage
-Lift,elevator
-terras,terrace
-Winkels,shops
-Entree,entrance
-scootmobielen,scooters
+werkkamer,bedroom
+woon-/slaapkamer,livingroom
+woonkamer,livingroom
+wtw,wtw

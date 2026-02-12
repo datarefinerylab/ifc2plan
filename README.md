@@ -13,9 +13,7 @@
 🌈 **Colored room type visualization** with customizable legends
 🏠 **Room naming conversion** (e.g., Dutch to English)
 ⚡ **Batch processing** for multiple IFC files
-🔧 **Robust geometry engine** using Trimesh + Shapely
-🔍 **IFC file overview** - inspect storeys and elements before processing
-🏢 **Storey-specific extraction** - process individual floors by index  
+🔧 **Robust geometry engine** using Trimesh + Shapely    
 
 ## Quick Start
 
@@ -23,20 +21,20 @@
 # Install dependencies
 pip install -r requirements.txt
 
-# Inspect IFC file structure (storeys, elements, etc.)
+# Show file overview (storeys, element counts)
 python extract_floor_plans.py building.ifc --overview
+
+# Extract specific storey only (much faster!)
+python extract_floor_plans.py building.ifc --storey 5
 
 # Extract geometric data as CSV/WKT
 python extract_floor_plans.py building.ifc
 
-# Process only a specific storey (e.g., ground floor)
-python extract_floor_plans.py building.ifc --storey 0
-
 # Generate professional floor plan images with colored room types
 python extract_floor_plans.py building.ifc --formatter image wkt --colored-spaces --naming-conversion naming_conversion.csv
 
-# Extract only spaces with room type coloring
-python extract_floor_plans.py building.ifc --space-only --colored-spaces --naming-conversion naming_conversion.csv
+# Extract only spaces with room type coloring for one floor
+python extract_floor_plans.py building.ifc --storey 0 --space-only --colored-spaces --naming-conversion naming_conversion.csv
 ```
 
 ## Installation
@@ -51,64 +49,19 @@ pip install -r requirements.txt
 
 ## Usage
 
-### Inspecting IFC Files
-
-Before processing, inspect the IFC file structure to understand its contents:
-
 ```bash
-# Show overview: storeys, elements, spatial structure
+# Show file overview first (fast, no geometry processing)
 python extract_floor_plans.py building.ifc --overview
-```
 
-**Example output:**
-```
-============================================================
-IFC FILE OVERVIEW
-============================================================
-Project: Office Building
-Building: Main Building
-Schema: IFC2X3
+# Extract only one storey (much faster than all storeys!)
+python extract_floor_plans.py building.ifc --storey 5
 
-Total Storeys: 3
-Total Elements: 1247
-
-Element Types (Overall):
-  IfcWall: 456
-  IfcSpace: 89
-  IfcSlab: 67
-  ...
-
-Storey Details:
-
-  [0] Ground Floor
-      Elevation: 0.00
-      Elements: 423
-      Element Types:
-        IfcWall: 152
-        IfcSpace: 28
-        ...
-
-  [1] First Floor
-      Elevation: 3.50
-      Elements: 412
-      ...
-```
-
-### Basic Extraction
-
-```bash
 # Basic usage (default: professional black & white style)
 python extract_floor_plans.py input.ifc
 
-# Process only a specific storey by index
-python extract_floor_plans.py building.ifc --storey 0 --output ./ground_floor
-
-# Process multiple storeys individually
-python extract_floor_plans.py building.ifc --storey 1 --output ./first_floor
-python extract_floor_plans.py building.ifc --storey 2 --output ./second_floor
-
-# Extract only spaces with colored room types
+# Extract only spaces with colored room types from storey 0
 python extract_floor_plans.py building.ifc \
+  --storey 0 \
   --space-only \
   --colored-spaces \
   --naming-conversion naming_conversion.csv
@@ -118,8 +71,9 @@ python extract_floor_plans.py building.ifc \
   --both \
   --naming-conversion naming_conversion.csv
 
-# Multiple outputs and styling
+# Multiple outputs and styling for specific storey
 python extract_floor_plans.py building.ifc \
+  --storey 2 \
   --output ./plans \
   --formatter image wkt \
   --style colorful \
@@ -134,7 +88,7 @@ python extract_floor_plans.py "buildings/*.ifc" --output ./all_plans
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `--overview` | Show IFC file overview (storeys, elements) and exit | `False` |
+| `--overview` | Show IFC file overview without processing geometry | `False` |
 | `--storey INDEX` | Process only specific storey by index (0-based) | All storeys |
 | `--output` | Output directory | `output` |
 | `--formatter` | Output format: `image`, `wkt` (space-separated) | `wkt` |
@@ -215,19 +169,10 @@ With `--colored-spaces` flag, each room type has a distinct color
 
 ## Troubleshooting
 
-**Need to inspect the IFC file first?**
-- Use `--overview` to see storey names, indices, and element counts before processing
-- This helps identify which storey to extract using `--storey INDEX`
-
 **No floor plans generated?**
-- Ensure your IFC file contains `IfcBuildingStorey` elements (check with `--overview`)
+- Ensure your IFC file contains `IfcBuildingStorey` elements
 - Try `--max-elements 100` for testing large files
 - Check that `--formatter image` is specified if you want image outputs
-
-**Want to process only specific floors?**
-- First run with `--overview` to see available storey indices
-- Then use `--storey 0` (or desired index) to process that specific floor
-- Useful for large buildings or when you only need certain floors
 
 **Room types not colored?**
 - Ensure you use `--colored-spaces` flag
@@ -238,10 +183,14 @@ With `--colored-spaces` flag, each room type has a distinct color
 - Remove empty rows from your naming conversion CSV file
 - Ensure all entries in the CSV have both original and translated names
 
-**Memory issues with large buildings?**
-- Use `--storey INDEX` to process one floor at a time
+**Memory issues?**
 - Use `--max-elements` to limit processing
 - Process files individually instead of batch
+
+**Processing very slow?**
+- Larger files take longer - this is normal
+- Check that your system isn't running other intensive tasks
+- Try with a smaller test file first using `--max-elements 100`
 
 ## License
 

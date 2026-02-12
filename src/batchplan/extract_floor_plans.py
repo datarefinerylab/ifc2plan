@@ -2,15 +2,15 @@ import argparse
 import glob
 from pathlib import Path
 import pandas as pd
-import ifcopenshell
 
-from geometry_engine import ShapelyTrimeshEngine, IFCGeometryProcessor
+from geometry_engine import ShapelyTrimeshEngine
 from formatters import FloorPlanImageFormatter, FloorWKTFormatter
 from ifc_processor import (
     default_filter,
     space_filter,
     process_storeys,
-    process_storeys_space_only
+    process_storeys_space_only,
+    print_ifc_overview
 )
 
 
@@ -41,13 +41,6 @@ def load_naming_conversion(csv_path):
         return {}
 
 
-def show_ifc_overview(ifc_path):
-    """Show overview of IFC file and exit"""
-    ifc_file = ifcopenshell.open(ifc_path)
-    processor = IFCGeometryProcessor()
-    processor.print_ifc_overview(ifc_file)
-
-
 def process_ifc_file(ifc_path, context):
     """Process a single IFC file"""
     print(f"\n{'=' * 60}")
@@ -62,14 +55,10 @@ def process_ifc_file(ifc_path, context):
     context["output_dir"] = output_dir
     context["ifc_path"] = ifc_path
 
-    # Add storey index to context if specified
-    if hasattr(context["args"], "storey") and context["args"].storey is not None:
-        context["storey_index"] = context["args"].storey
-
     try:
         # Choose processing mode
         if context["args"].space_only:
-            print("Mode: Space-only extraction")
+            print("Mode: Space-only extraction (like notebook)")
             process_storeys_space_only(context)
         else:
             print("Mode: Full geometry extraction (all elements)")
@@ -84,24 +73,24 @@ def main():
     """Main function with modernized argument parsing"""
 
     parser = argparse.ArgumentParser(
-        description="Extract floor plans from IFC files",
+        description="Extract floor plans from IFC files - OPTIMIZED VERSION",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Show overview of IFC file (storeys, elements, etc.)
+  # Show file overview without processing geometry
   python extract_floor_plans.py building.ifc --overview
+
+  # Extract only storey 5 (use --overview to see indices)
+  python extract_floor_plans.py building.ifc --storey 5
 
   # Extract all elements (walls, spaces, etc.) - default: professional b&w style
   python extract_floor_plans.py building.ifc --output ./output
 
-  # Extract only a specific storey (use --overview first to see storey indices)
-  python extract_floor_plans.py building.ifc --storey 0 --output ./output
-
   # Extract only IfcSpace elements with colored room types
   python extract_floor_plans.py building.ifc --space-only --naming-conversion names.csv --colored-spaces
 
-  # Generate both colored and black & white versions
-  python extract_floor_plans.py building.ifc --space-only --naming-conversion names.csv --both
+  # Generate both colored and black & white versions for storey 0
+  python extract_floor_plans.py building.ifc --storey 0 --space-only --naming-conversion names.csv --both
         """
     )
 
@@ -111,15 +100,13 @@ Examples:
                         choices=["image", "wkt"],
                         help="Output formatters (space-separated list)")
 
-    # Overview mode
-    parser.add_argument("--overview", action="store_true",
-                        help="Show IFC file overview (storeys, elements, structure) and exit")
-
     # Processing mode
+    parser.add_argument("--overview", action="store_true",
+                        help="Show IFC file overview (storeys, elements) without processing geometry")
+    parser.add_argument("--storey", type=int, default=None,
+                        help="Process only specific storey by index (0-based). Use --overview to see indices.")
     parser.add_argument("--space-only", action="store_true",
                         help="Extract only IfcSpace elements (matches notebook approach)")
-    parser.add_argument("--storey", type=int, default=None,
-                        help="Process only specific storey by index (0-based). Use --overview to see available storeys")
     parser.add_argument("--naming-conversion", type=str, default=None,
                         help="CSV file with naming conversion (Dutch->English). Format: original,english")
 
@@ -137,6 +124,8 @@ Examples:
                         help="Generate both colored and black & white versions")
 
     # Performance
+    parser.add_argument("--parallel", action="store_true",
+                        help="Enable parallel processing (experimental - may be slower for large IFC files)")
     parser.add_argument("--max-elements", type=int, default=None,
                         help="Maximum number of elements to process (for testing large files)")
     parser.add_argument("--skip-failed", action="store_true",
@@ -146,17 +135,17 @@ Examples:
 
     args = parser.parse_args()
 
-    # Process IFC files
-    ifc_paths = glob.glob(args.ifc_paths)
-    if not ifc_paths:
-        print(f"No IFC files found matching: {args.ifc_paths}")
-        return
-
-    # Handle overview mode
+    # Handle overview mode - just show file info and exit
     if args.overview:
+        ifc_paths = glob.glob(args.ifc_paths)
+        if not ifc_paths:
+            print(f"No IFC files found matching: {args.ifc_paths}")
+            return
+
         for ifc_path in ifc_paths:
-            show_ifc_overview(ifc_path)
-        return
+            print_ifc_overview(ifc_path)
+
+        return  # Exit after showing overview
 
     # Load naming conversion if provided
     naming_conversion = {}
@@ -174,7 +163,9 @@ Examples:
         "max_elements": args.max_elements,
         "naming_conversion": naming_conversion,
         "colored_spaces": args.colored_spaces,
-        "both": args.both
+        "both": args.both,
+        "parallel": args.parallel,  # Opt-in parallel processing
+        "storey_index": args.storey  # Add storey filter
     }
 
     # Setup formatters
@@ -186,6 +177,20 @@ Examples:
     context["formatters"] = setup_formatters(context, selected_formatters)
 
     # Process IFC files
+    ifc_paths = glob.glob(args.ifc_paths)
+    if not ifc_paths:
+        print(f"No IFC files found matching: {args.ifc_paths}")
+        return
+
+    print(f"\n{'=' * 60}")
+    print(f"PERFORMANCE OPTIMIZATIONS ENABLED:")
+    print(f"  🎯 Storey-filtered processing: ON")
+    print(f"  🚀 Fast geometry extraction: ON")
+    print(f"  💾 Settings caching: ON")
+    if context['storey_index'] is not None:
+        print(f"  📍 Single storey mode: Storey {context['storey_index']}")
+    print(f"{'=' * 60}\n")
+
     for ifc_path in ifc_paths:
         process_ifc_file(ifc_path, context)
 
