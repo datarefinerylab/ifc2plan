@@ -7,7 +7,7 @@ Entree,entrance
 Entreehal,entrance
 Fietsenstalling,bikes
 Lift,elevator
-Lifthal,elevator shaft
+Lifthal,elevator
 Room,room
 Service,serviceroom
 TRUDO,not defined
@@ -22,7 +22,7 @@ berging,storage
 bergruimte,storage
 binnentuin,indoor garden
 buiten,outside
-cera,cera
+cera,Central Energy Recovery Airflow
 doorwaaikap,not defined
 esco,esco
 fietsenstalling,bikes
@@ -30,8 +30,8 @@ galerij,gallery
 gang,corridor
 hal,corridor
 kast,storage
-lifthal,elevator shaft
-liftschacht,elevator shaft
+lifthal,elevator
+liftschacht,elevator
 loggia,balcony
 meterkast,storage
 patio,patio

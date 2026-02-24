@@ -13,6 +13,59 @@ from geometry_engine import IFCGeometryProcessor
 from collections import Counter, defaultdict
 
 
+# ── Room Type Cleaning Rules ─────────────────────────────────────────────────
+
+KEEP_AS_IS = {
+    "storage", "bathroom", "shaft", "corridor", "bedroom",
+    "livingroom", "balcony", "area",
+    "GO_Logiesfunctie", "esco", "VG", "staircase",
+    "elevator shaft", "cera",
+    "GO_Woonfunctie", "elevator",
+    "GBO_buitenruimte", "GBO",
+}
+
+# Build a lowercase lookup for keep-as-is matching (preserves original casing)
+KEEP_LOWER = {v.lower(): v for v in KEEP_AS_IS}
+
+
+def clean_room_type(room_type: str) -> str:
+    """
+    Clean and normalize room type names according to standardized rules.
+
+    Rules applied:
+      1. "elevator shaft" or "elevator" (case-insensitive)  → "elevator"
+      2. "cera" (case-insensitive)                          → "Central Energy Recovery Airflow"
+      3. Values in the KEEP_AS_IS set                       → unchanged
+      4. Non-empty values not matched above                 → prefix "remaining_"
+      5. Empty / blank values                               → unchanged (left empty)
+
+    Args:
+        room_type: Raw room type string
+
+    Returns:
+        str: Cleaned room type value
+    """
+    raw = room_type  # keep original for whitespace logic
+    stripped = raw.strip()
+
+    # Empty → leave alone
+    if not stripped:
+        return raw  # preserve whatever was there (blank stays blank)
+
+    lower = stripped.lower()
+
+    # Rule: keep-as-is set (case-sensitive exact match first, then case-insensitive)
+    if stripped in KEEP_AS_IS:
+        return stripped
+    if lower in KEEP_LOWER:
+        return KEEP_LOWER[lower]   # return canonical casing from the set
+
+    # Rule: everything else non-empty → prefix (idempotent: skip if already prefixed)
+    if stripped.startswith("remaining_"):
+        return stripped
+    return "remaining_" + stripped
+
+
 def print_ifc_overview(ifc_path):
     """
     Print a detailed overview of IFC file contents without processing geometry.
@@ -136,7 +189,7 @@ def get_room_type_from_space(space, naming_conversion=None):
         naming_conversion: dict mapping original names to English names (case-insensitive)
 
     Returns:
-        str: Room type or None if not found
+        str: Room type or None if not found (cleaned according to normalization rules)
     """
     # Only process IfcSpace elements
     if not space.is_a("IfcSpace"):
@@ -162,7 +215,8 @@ def get_room_type_from_space(space, naming_conversion=None):
                 if naming_conversion_lower:
                     roomtype = naming_conversion_lower.get(roomtype.lower(), roomtype)
 
-                return roomtype
+                # Apply room type cleaning/normalization
+                return clean_room_type(roomtype)
     except Exception:
         pass
 
@@ -186,7 +240,7 @@ def get_room_type(element, naming_conversion=None):
         naming_conversion: optional dict mapping raw codes -> English names (case-insensitive)
 
     Returns:
-        str: Room type or "Unknown" if not found, None if not IfcSpace
+        str: Room type or "Unknown" if not found, None if not IfcSpace (cleaned according to normalization rules)
     """
     # Only process IfcSpace elements
     if not element.is_a("IfcSpace"):
@@ -220,14 +274,18 @@ def get_room_type(element, naming_conversion=None):
             if reference:
                 roomtype = _map(_first_word(str(reference)))
                 if roomtype:
-                    return roomtype
+                    # Apply room type cleaning/normalization
+                    return clean_room_type(roomtype)
     except:
         pass
 
     if hasattr(element, "ObjectType") and element.ObjectType:
-        return _map(_first_word(str(element.ObjectType)))
+        roomtype = _map(_first_word(str(element.ObjectType)))
+        # Apply room type cleaning/normalization
+        return clean_room_type(roomtype)
 
-    return "Unknown"
+    # Apply cleaning even to "Unknown"
+    return clean_room_type("Unknown")
 
 
 def geometry_from_shape_fast(shape):
