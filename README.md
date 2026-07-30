@@ -1,4 +1,4 @@
-# IFC Floor Plan Extractor
+# ifc2plan
 
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -42,8 +42,8 @@ python extract_floor_plans.py building.ifc --storey 0 --space-only --colored-spa
 **Requirements:** Python 3.8+
 
 ```bash
-git clone https://github.com/datarefinerylab/BatchPlan.git
-cd BatchPlan
+git clone https://github.com/datarefinerylab/ifc2plan.git
+cd ifc2plan
 pip install -r requirements.txt
 ```
 
@@ -192,9 +192,28 @@ With `--colored-spaces` flag, each room type has a distinct color
 - Check that your system isn't running other intensive tasks
 - Try with a smaller test file first using `--max-elements 100`
 
+## Origin
+
+`ifc2plan` began as a fork of [byildiz/BatchPlan](https://github.com/byildiz/BatchPlan)
+and was renamed after diverging substantially from it. It is a derivative work, MIT
+licensed, and the original copyright is retained — see [LICENSE](LICENSE).
+
+- Derived from [`byildiz/BatchPlan@4958a6f`](https://github.com/byildiz/BatchPlan/commit/4958a6f).
+  This repository's history was truncated to its own work, so the original commits are
+  **not** in this history — they remain in `byildiz/BatchPlan`. The root commit here
+  records the derivation.
+- The OpenCASCADE/SWIG geometry pipeline of the original was replaced with a
+  [Trimesh](https://trimsh.org/) + [Shapely](https://shapely.readthedocs.io/) engine
+  (`src/ifc2plan/geometry_engine.py`, `src/ifc2plan/ifc_processor.py`).
+- The original's material/LCA database tooling was removed; this repository is scoped to
+  floor plan and geometry extraction.
+
+The former repository, `datarefinerylab/BatchPlan`, is archived and read-only.
+
 ## License
 
 MIT License - see [LICENSE](LICENSE) file for details.
+Copyright © 2024 Burak Yildiz (original work), © 2026 Data Refinery Lab (this fork).
 
 ---
 

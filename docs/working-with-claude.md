@@ -1,4 +1,4 @@
-# Working on BatchPlan with Claude Code
+# Working on ifc2plan with Claude Code
 
 A practical handout: how to plan work, turn it into GitHub issues, and close them.
 Repo context Claude loads automatically lives in [`../CLAUDE.md`](../CLAUDE.md) — this file is for you.
@@ -8,7 +8,7 @@ Repo context Claude loads automatically lives in [`../CLAUDE.md`](../CLAUDE.md) 
 ## 0. One-time setup
 
 ```bash
-cd ~/Projects/BatchPlan
+cd ~/Projects/ifc2plan
 claude
 ```
 
@@ -29,8 +29,9 @@ gh label create paper   --color fbca04 --description "Needed for publication"
 # `feature` is redundant with the built-in `enhancement` — pick one and stick to it.
 ```
 
-Add `--repo datarefinerylab/BatchPlan` to any `gh` command if `gh repo set-default`
-hasn't been run in this clone (see `../CLAUDE.md` — the default resolves to *upstream*).
+`gh repo set-default datarefinerylab/ifc2plan` is per-clone (it lives in `.git/config`,
+which isn't committed), so run it once in a fresh clone. The repo is no longer a fork and
+has a single remote, so there's nothing for `gh` to mis-resolve after that.
 
 ---
 
@@ -57,13 +58,13 @@ For a bigger sweep, ask for a parallel investigation:
 
 ### Stage 2 — Turn it into issues
 
-> Based on that analysis, open GitHub issues on `datarefinerylab/BatchPlan`. One issue per independently-fixable problem. Each needs: a one-line title, observed vs expected behaviour, the exact command to reproduce on the Schependomlaan example, the file:line where you think it originates, and a definition of done. Label them appropriately. Show me the bodies before creating anything.
+> Based on that analysis, open GitHub issues on `datarefinerylab/ifc2plan`. One issue per independently-fixable problem. Each needs: a one-line title, observed vs expected behaviour, the exact command to reproduce on the Schependomlaan example, the file:line where you think it originates, and a definition of done. Label them appropriately. Show me the bodies before creating anything.
 
 Always ask to see the bodies first — issues on this repo are visible to the lab.
 
 Good issue hygiene here, given there are no tests:
 
-- **Reproduce command in every issue.** `cd src/batchplan && python extract_floor_plans.py … --storey 0`
+- **Reproduce command in every issue.** `cd src/ifc2plan && python extract_floor_plans.py … --storey 0`
 - **Definition of done is an observable output**, not "code is fixed". e.g. *"every IfcDoor polygon in `02 tweede verdieping_floor_plan.csv` has exactly 5 WKT coordinate pairs (4 corners + closure)"*.
 - **Output filenames come from the storey name, not an index.** The output directory is
   `{--output}/{ifc file stem}` (`extract_floor_plans.py:51`) and the formatters append
@@ -144,7 +145,7 @@ Claude can run all of these. Your token has `repo` scope, so issue and PR creati
 | Thing | Why it matters here |
 |---|---|
 | **Shift+Tab** | Cycles plan mode / auto-accept. Use plan mode for anything geometry-related — the reasoning is the valuable part. |
-| **`@src/batchplan/ifc_processor.py`** | Drops a file into context directly instead of making Claude hunt for it. |
+| **`@src/ifc2plan/ifc_processor.py`** | Drops a file into context directly instead of making Claude hunt for it. |
 | **`!` prefix** | `!git log --oneline -5` runs it in-session and the output lands in the conversation. Use for anything interactive (`gh auth login`, activating an env). |
 | **`#` prefix** | Appends a fact to `CLAUDE.md`. When you discover a gotcha mid-session, `#` it immediately so the next session knows. |
 | **Esc, Esc** | Rewind to an earlier message and take a different path — cheaper than arguing with a bad direction. |
@@ -158,7 +159,7 @@ Claude can run all of these. Your token has `repo` scope, so issue and PR creati
 Create `.claude/commands/issue.md` in the repo if you find yourself repeating the issue-creation prompt:
 
 ```markdown
-Turn the following into a GitHub issue on datarefinerylab/BatchPlan: $ARGUMENTS
+Turn the following into a GitHub issue on datarefinerylab/ifc2plan: $ARGUMENTS
 
 Required sections: Observed / Expected / Reproduce (exact command against
 examples/data/Shependomlaan) / Suspected origin (file:line) / Definition of done
