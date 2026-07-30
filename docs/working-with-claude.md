@@ -99,13 +99,25 @@ Then verify yourself — this codebase has no safety net:
 
 ## 2. Ready-to-paste prompts for the current backlog
 
-**Door geometry (the Aug 31 item)**
+**Door and window geometry — done, see #1 and #2**
 
-> The known symptom: door polygons in the extracted floor plans aren't rectangles, while IfcSpace polygons are correct. Two suspects are in `CLAUDE.md`. Investigate in plan mode, then write up what you find as a GitHub issue with a reproduce command — do not fix it yet.
+Both are fixed. The cause was not either of the two suspects originally listed
+here: `trimesh.Trimesh(verts, faces)` welds vertices shared between separate solids,
+fusing a door's leaf and frame into one torn surface, after which the section tracer
+traced chains that hopped between parts and had to be force-closed with invented
+edges. Fixed by `process=False` plus sectioning each solid on its own.
 
-**Windows (unconfirmed — same bug or not?)**
+Windows had the same defect (they were never separately broken) — 63% → 78%
+rectangular. That closes the "windows, unconfirmed" question.
 
-> Windows were filtered out of earlier tests so we don't know whether they have the same defect as doors. Design the smallest experiment that answers this on the Schependomlaan file, run it, and report the answer with the actual polygon coordinates as evidence.
+Worth knowing for future geometry work: **"rectangular" is a bad success metric.**
+A real door section legitimately contains L-shaped frame profiles and folded sheet
+channels. Verify correctness instead — every polygon should come from a watertight
+solid, and areas can be checked independently by ray casting.
+
+**Section height (issue #3 — the biggest remaining defect)**
+
+> Storey `[0]` of the example produces no intersections at all, and 45 of 205 doors never reach their storey's cutting plane. `process_storeys` hard-codes millimetre elevations and never reads the model's `IfcUnitAssignment`. Make the cut height derive from the declared unit plus a documented CLI offset, and report every element that misses the plane rather than dropping it silently.
 
 **Per-unit output instead of per-floor**
 
