@@ -210,11 +210,6 @@ licensed, and the original copyright is retained — see [LICENSE](LICENSE).
 
 The former repository, `datarefinerylab/BatchPlan`, is archived and read-only.
 
-## License
-
-MIT License - see [LICENSE](LICENSE) file for details.
-Copyright © 2024 Burak Yildiz (original work), © 2026 Data Refinery Lab (this fork).
-
 ---
 
 **Built with:** [IfcOpenShell](https://ifcopenshell.org/) • [Trimesh](https://trimsh.org/) • [Shapely](https://shapely.readthedocs.io/)
