@@ -2,7 +2,6 @@ from abc import ABC, abstractmethod
 from typing import List, Tuple, Optional, Union
 import numpy as np
 from shapely.geometry import Polygon, MultiPolygon
-from shapely.ops import unary_union
 from shapely.strtree import STRtree
 import trimesh
 
@@ -204,30 +203,41 @@ class ShapelyTrimeshEngine(GeometryEngine):
         return result
 
     def _postprocess_polygons(self, polygons: List[Polygon]) -> List[Polygon]:
-        """Post-process polygons to match OCC behavior"""
-        if not polygons:
-            return []
+        """
+        Drop degenerate polygons and exact duplicates.
 
-        # Remove duplicates and merge overlapping polygons
-        valid_polygons = []
+        This used to unary_union everything "similar to how OCC handles wire
+        connections". The union welded a door's distinct sub-parts - leaf, frame
+        jambs, glazing beads, stops - into single L-, H- and ring-shaped polygons
+        wherever they touched, destroying rectangles that were already correct.
+
+        The union was compensating for the old entity-by-entity assembly, which
+        produced open and overlapping fragments. _assemble_with_holes now yields
+        properly closed, properly nested loops, so there is nothing left to
+        compensate for and parts stay parts.
+        """
+        result: List[Polygon] = []
+
         for poly in polygons:
-            if poly is not None and poly.is_valid and poly.area > self.tolerance:
-                valid_polygons.append(poly)
+            if poly is None or poly.is_empty or not poly.is_valid:
+                continue
+            if poly.area <= self.tolerance:
+                continue
 
-        if not valid_polygons:
-            return []
+            # Mesh triangulation leaves vertices sitting exactly on the segment
+            # between their neighbours. simplify(0) drops those and nothing else -
+            # the area is unchanged to floating point - so an outline is described
+            # by its corners rather than by every triangle edge that met it.
+            poly = poly.simplify(0)
+            if poly.is_empty or not poly.is_valid:
+                continue
 
-        # Merge overlapping polygons (similar to how OCC handles wire connections)
-        try:
-            union_result = unary_union(valid_polygons)
-            if isinstance(union_result, Polygon):
-                return [union_result]
-            elif isinstance(union_result, MultiPolygon):
-                return list(union_result.geoms)
-            else:
-                return valid_polygons
-        except Exception:
-            return valid_polygons
+            # Coincident faces in a mesh can section to the same loop twice
+            if any(poly.equals(kept) for kept in result):
+                continue
+            result.append(poly)
+
+        return result
 
     def get_polygon_area(self, polygon: Polygon) -> float:
         """Get the area of a polygon"""
