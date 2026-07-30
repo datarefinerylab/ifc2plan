@@ -57,7 +57,19 @@ class ShapelyTrimeshEngine(GeometryEngine):
     def intersect_with_plane(self, mesh: trimesh.Trimesh, plane_origin: Tuple[float, float, float],
                              plane_normal: Tuple[float, float, float]) -> List[Polygon]:
         """
-        Intersect a 3D mesh with a plane and return 2D polygons
+        Intersect a 3D mesh with a plane and return 2D polygons.
+
+        Each solid of the mesh is sectioned on its own. An IFC element is usually
+        several solids that touch - a door is a leaf, two frame jambs, stops,
+        glazing beads - and they share corner points where they meet. Sectioning
+        the whole mesh at once lets trimesh's path builder weld those shared points
+        and trace a single chain that hops from one solid to the next across the air
+        between them. That chain does not close, and forcing it shut invents an edge
+        that is in no solid: on storey 3 of the example file it produced 38 open
+        chains with gaps up to 914 mm, and two "doors" that were bare triangles.
+
+        Sectioning per solid removes the opportunity: every loop then closes on its
+        own.
         """
         try:
             # Convert to numpy arrays and normalize
@@ -65,22 +77,43 @@ class ShapelyTrimeshEngine(GeometryEngine):
             plane_normal = np.array(plane_normal, dtype=float)
             plane_normal = plane_normal / np.linalg.norm(plane_normal)
 
-            # Use trimesh's section method - this is the key replacement for OCC
-            section = mesh.section(plane_origin=plane_origin, plane_normal=plane_normal)
+            polygons = []
 
-            if section is None:
-                return []
+            for solid in self._solids(mesh):
+                low, high = solid.bounds[0][2], solid.bounds[1][2]
+                if not (low <= plane_origin[2] <= high):
+                    continue
 
-            # Stitch the section's line entities into closed loops, then work out
-            # which loops are holes inside which others.
-            rings = self._closed_rings(section)
-            polygons = self._assemble_with_holes(rings)
+                section = solid.section(plane_origin=plane_origin,
+                                        plane_normal=plane_normal)
+                if section is None:
+                    continue
+
+                # Stitch this solid's line entities into closed loops, then work
+                # out which loops are holes inside which others.
+                rings = self._closed_rings(section)
+                polygons.extend(self._assemble_with_holes(rings))
 
             return self._postprocess_polygons(polygons)
 
         except Exception as e:
             print(f"Warning: Failed to intersect mesh with plane: {e}")
             return []
+
+    def _solids(self, mesh: trimesh.Trimesh) -> List[trimesh.Trimesh]:
+        """
+        Split a mesh into the separate solids it is made of.
+
+        This relies on the mesh having been built with process=False, so that
+        vertices belonging to different solids were never welded together and the
+        solids are still separate connected components. See process_ifc_element.
+        """
+        try:
+            solids = mesh.split(only_watertight=False)
+        except Exception:
+            solids = []
+
+        return list(solids) if len(solids) else [mesh]
 
     def _closed_rings(self, section: trimesh.path.Path3D) -> List[Polygon]:
         """
@@ -369,8 +402,16 @@ class IFCGeometryProcessor:
             vertices = np.array(vertices).reshape(-1, 3)
             faces = np.array(faces).reshape(-1, 3)
 
-            # Create trimesh
-            mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
+            # process=False is load-bearing, not an optimisation. Trimesh's default
+            # processing welds vertices that sit at the same point, and in an IFC
+            # element those are the corners where separate solids touch - a door
+            # leaf against its frame. Welding them fuses distinct solids into one
+            # torn, non-manifold surface: door 670101 goes from 219 vertices, 20
+            # watertight solids and 0 broken faces to 128 vertices, 68 fragments
+            # and 234 broken faces. ifcopenshell has already welded vertices
+            # correctly within each solid (WELD_VERTICES above); doing it again
+            # across solids is what corrupts the mesh.
+            mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
 
             # Apply transformation matrix if available
             if hasattr(shape, 'transformation') and shape.transformation is not None:
