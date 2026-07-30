@@ -80,19 +80,31 @@ class ShapelyTrimeshEngine(GeometryEngine):
             polygons = []
 
             for solid in self._solids(mesh):
-                low, high = solid.bounds[0][2], solid.bounds[1][2]
-                if not (low <= plane_origin[2] <= high):
-                    continue
+                # split() can hand back a solid with no faces, whose bounds are
+                # None. Handle it per solid: one empty solid must not abort the
+                # rest of the element, or a good part disappears with it.
+                try:
+                    bounds = solid.bounds
+                    if bounds is None:
+                        continue
 
-                section = solid.section(plane_origin=plane_origin,
-                                        plane_normal=plane_normal)
-                if section is None:
-                    continue
+                    low, high = bounds[0][2], bounds[1][2]
+                    if not (low <= plane_origin[2] <= high):
+                        continue
 
-                # Stitch this solid's line entities into closed loops, then work
-                # out which loops are holes inside which others.
-                rings = self._closed_rings(section)
-                polygons.extend(self._assemble_with_holes(rings))
+                    section = solid.section(plane_origin=plane_origin,
+                                            plane_normal=plane_normal)
+                    if section is None:
+                        continue
+
+                    # Stitch this solid's line entities into closed loops, then
+                    # work out which loops are holes inside which others.
+                    rings = self._closed_rings(section)
+                    polygons.extend(self._assemble_with_holes(rings))
+
+                except Exception as e:
+                    print(f"Warning: Failed to section one solid: {e}")
+                    continue
 
             return self._postprocess_polygons(polygons)
 
