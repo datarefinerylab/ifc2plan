@@ -212,15 +212,22 @@ class ShapelyTrimeshEngine(GeometryEngine):
             return rings
 
         tree = STRtree(rings)
-        points = [r.representative_point() for r in rings]
 
         depth = [0] * len(rings)
         parent = [None] * len(rings)
 
-        for i, point in enumerate(points):
-            for j in tree.query(point):
+        # Containment is tested on the whole ring, not on a point inside it. A
+        # representative point of the OUTER ring of a hollow section lands inside
+        # the inner ring, which made both rings look enclosed, classified both as
+        # holes and dropped the element entirely - every tube and hollow column
+        # disappeared from the output.
+        # The area guard keeps duplicate rings from enclosing each other.
+        for i, ring in enumerate(rings):
+            for j in tree.query(ring):
                 j = int(j)
-                if j == i or not rings[j].contains(point):
+                if j == i or rings[j].area <= ring.area:
+                    continue
+                if not rings[j].contains(ring):
                     continue
                 depth[i] += 1
                 if parent[i] is None or rings[j].area < rings[parent[i]].area:
