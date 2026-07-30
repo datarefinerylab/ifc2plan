@@ -3,6 +3,7 @@ from typing import List, Tuple, Optional, Union
 import numpy as np
 from shapely.geometry import Polygon, MultiPolygon
 from shapely.ops import unary_union
+from shapely.strtree import STRtree
 import trimesh
 
 
@@ -33,6 +34,15 @@ class ShapelyTrimeshEngine(GeometryEngine):
 
     def __init__(self):
         self.tolerance = 1e-6
+        self.reset_stats()
+
+    def reset_stats(self):
+        """Reset the per-run counters reported in the storey summary"""
+        self.stats = {
+            "open_fragments": 0,   # section entities not part of any closed loop
+            "unusable_rings": 0,   # closed loops that yielded no valid polygon
+            "elements_affected": 0,  # elements that lost at least one of the above
+        }
 
     def create_polygon_from_points(self, points: List[Tuple[float, float]]) -> Polygon:
         """Create a polygon from a list of 2D points"""
@@ -57,73 +67,141 @@ class ShapelyTrimeshEngine(GeometryEngine):
             plane_normal = plane_normal / np.linalg.norm(plane_normal)
 
             # Use trimesh's section method - this is the key replacement for OCC
-            slice_2d = mesh.section(plane_origin=plane_origin, plane_normal=plane_normal)
+            section = mesh.section(plane_origin=plane_origin, plane_normal=plane_normal)
 
-            if slice_2d is None:
+            if section is None:
                 return []
 
-            polygons = []
+            # Stitch the section's line entities into closed loops, then work out
+            # which loops are holes inside which others.
+            rings = self._closed_rings(section)
+            polygons = self._assemble_with_holes(rings)
 
-            # Handle different trimesh section result types
-            if hasattr(slice_2d, 'polygons_full') and slice_2d.polygons_full is not None:
-                # Newer trimesh versions
-                for polygon_data in slice_2d.polygons_full:
-                    if len(polygon_data) >= 3:
-                        poly = self._create_valid_polygon(polygon_data)
-                        if poly is not None:
-                            polygons.append(poly)
-
-            elif hasattr(slice_2d, 'entities') and len(slice_2d.entities) > 0:
-                # Handle Path2D with entities
-                vertices_2d = slice_2d.vertices
-                for entity in slice_2d.entities:
-                    if hasattr(entity, 'points') and len(entity.points) >= 3:
-                        points = vertices_2d[entity.points]
-                        poly = self._create_valid_polygon(points)
-                        if poly is not None:
-                            polygons.append(poly)
-
-            elif hasattr(slice_2d, 'vertices') and len(slice_2d.vertices) >= 3:
-                # Simple case - vertices form a single polygon
-                poly = self._create_valid_polygon(slice_2d.vertices)
-                if poly is not None:
-                    polygons.append(poly)
-
-            # Post-process polygons to match OCC behavior
             return self._postprocess_polygons(polygons)
 
         except Exception as e:
             print(f"Warning: Failed to intersect mesh with plane: {e}")
             return []
 
-    def _create_valid_polygon(self, points: np.ndarray) -> Optional[Polygon]:
-        """Create a valid polygon from points, handling edge cases"""
+    def _closed_rings(self, section: trimesh.path.Path3D) -> List[Polygon]:
+        """
+        Closed loops of a section, as 2D polygons in world XY.
+
+        `section.discrete` walks the section's line entities and joins them into
+        closed loops, which is what an element outline actually is. Taking each
+        entity on its own instead (as this used to) turns one door into a pile of
+        disconnected fragments.
+
+        Coordinates stay in world XY on purpose: `section.to_2D()` re-origins onto
+        the cutting plane's own frame, and every downstream consumer - WKT output,
+        image formatter, room lookup - expects world coordinates.
+        """
         try:
-            if len(points) < 3:
-                return None
-
-            # Convert to 2D if needed (take only x,y coordinates)
-            if points.shape[1] > 2:
-                points = points[:, :2]
-
-            # Create polygon
-            poly = Polygon(points)
-
-            # Validate and fix if needed
-            if not poly.is_valid:
-                # Try to fix invalid polygons
-                poly = poly.buffer(0)
-                if not poly.is_valid:
-                    return None
-
-            # Check minimum area
-            if poly.area < self.tolerance:
-                return None
-
-            return poly
-
+            loops = section.discrete
         except Exception:
-            return None
+            loops = []
+
+        rings = []
+        unusable = 0
+        for loop in loops:
+            polys = self._polygons_from_ring(np.asarray(loop))
+            if polys:
+                rings.extend(polys)
+            else:
+                unusable += 1
+
+        # Entities that never closed into a loop are dangling fragments. The old
+        # code dropped them with a bare `len(points) >= 3` guard; count them so a
+        # run that quietly loses geometry says so.
+        used = set()
+        for path in getattr(section, "paths", []):
+            used.update(int(i) for i in path)
+        open_fragments = max(len(section.entities) - len(used), 0)
+
+        self.stats["open_fragments"] += open_fragments
+        self.stats["unusable_rings"] += unusable
+        if open_fragments or unusable:
+            self.stats["elements_affected"] += 1
+
+        return rings
+
+    def _polygons_from_ring(self, points: np.ndarray) -> List[Polygon]:
+        """
+        Turn one closed loop into zero or more valid polygons.
+
+        A self-intersecting loop is repaired with buffer(0), which can legitimately
+        split it into several pieces - hence a list rather than a single polygon.
+        """
+        if len(points) < 3:
+            return []
+
+        if points.ndim != 2:
+            return []
+
+        # Drop Z: the section plane is horizontal, so world XY is the plan view
+        if points.shape[1] > 2:
+            points = points[:, :2]
+
+        try:
+            poly = Polygon(points)
+            if not poly.is_valid:
+                poly = poly.buffer(0)
+        except Exception:
+            return []
+
+        if poly.is_empty or not poly.is_valid:
+            return []
+
+        parts = list(poly.geoms) if isinstance(poly, MultiPolygon) else [poly]
+        return [p for p in parts if isinstance(p, Polygon) and p.area > self.tolerance]
+
+    def _assemble_with_holes(self, rings: List[Polygon]) -> List[Polygon]:
+        """
+        Nest rings into shells with interiors, using even-odd containment depth.
+
+        A ring contained by an even number of other rings is a shell; one contained
+        by an odd number is a hole in its smallest containing shell. This is the
+        same rule trimesh's `polygons_full` applies, but built on Shapely's STRtree
+        so it needs no `rtree`/libspatialindex native dependency.
+        """
+        if len(rings) <= 1:
+            return rings
+
+        tree = STRtree(rings)
+        points = [r.representative_point() for r in rings]
+
+        depth = [0] * len(rings)
+        parent = [None] * len(rings)
+
+        for i, point in enumerate(points):
+            for j in tree.query(point):
+                j = int(j)
+                if j == i or not rings[j].contains(point):
+                    continue
+                depth[i] += 1
+                if parent[i] is None or rings[j].area < rings[parent[i]].area:
+                    parent[i] = j
+
+        result = []
+        for i, ring in enumerate(rings):
+            if depth[i] % 2 != 0:
+                continue  # a hole; attached to its shell below
+
+            holes = [
+                rings[k].exterior.coords
+                for k in range(len(rings))
+                if parent[k] == i and depth[k] == depth[i] + 1
+            ]
+
+            poly = Polygon(ring.exterior.coords, holes) if holes else ring
+            if not poly.is_valid:
+                poly = poly.buffer(0)
+            result.extend(
+                p for p in (poly.geoms if isinstance(poly, MultiPolygon) else [poly])
+                if isinstance(p, Polygon) and p.area > self.tolerance
+            )
+
+        return result
 
     def _postprocess_polygons(self, polygons: List[Polygon]) -> List[Polygon]:
         """Post-process polygons to match OCC behavior"""
