@@ -100,6 +100,36 @@ python extract_floor_plans.py "buildings/*.ifc" --output ./all_plans
 | `--naming-conversion` | CSV file for room name translation (format: `original,english`) | `None` |
 | `--width/--height` | Image dimensions (pixels) | `2048` |
 | `--max-elements` | Limit for large files (testing) | `None` |
+| `--slow-element-seconds` | Report any element slower than this to convert | `5.0` |
+| `--max-faces` | Skip elements declaring more faces than this (trades completeness for speed) | `None` |
+
+### When a run is unexpectedly slow
+
+Conversion time is usually concentrated in a very small number of heavily
+tessellated elements. On one storey of a real model, four elements out of 669
+accounted for 99% of the time — over half an hour, with nothing in the output
+saying which ones they were.
+
+Those elements are now named as they are converted, and summarised at the end of
+each storey:
+
+```
+   ⏱  Slow element: IfcCovering #462475 '47_GM_waterslag' (26,011 faces) took 157.8s
+
+   ⏱  4 slow element(s), 309s total:
+        157.8s  IfcCovering #462475 '47_GM_waterslag' (26,011 faces)
+         86.5s  IfcCovering #504259 '47_GM_waterslag' (26,011 faces)
+```
+
+If you do not need that geometry, `--max-faces` skips it. On the storey above,
+`--max-faces 12000` takes the mesh pass from **162 s to 5.6 s** at the cost of
+those four elements (655 meshes → 651).
+
+Pick the threshold from the report rather than guessing: the face count is a
+coarse proxy for cost, not a direct one. In that model a 10,239-face door
+converts in 0.66 s while a 15,736-face covering takes 23 s, so a limit set too
+low discards geometry without buying time. The flag is off by default for the
+same reason — it changes output.
 
 ## Output Structure
 

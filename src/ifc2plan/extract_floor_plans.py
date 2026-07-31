@@ -3,7 +3,7 @@ import glob
 from pathlib import Path
 import pandas as pd
 
-from geometry_engine import ShapelyTrimeshEngine
+from geometry_engine import ShapelyTrimeshEngine, SLOW_ELEMENT_SECONDS
 from formatters import FloorPlanImageFormatter, FloorWKTFormatter
 from ifc_processor import (
     default_filter,
@@ -135,6 +135,13 @@ Examples:
                         help="Maximum number of elements to process (for testing large files)")
     parser.add_argument("--skip-failed", action="store_true",
                         help="Continue processing even if some elements fail")
+    parser.add_argument("--slow-element-seconds", type=float, default=SLOW_ELEMENT_SECONDS,
+                        help=f"Report any element taking longer than this to convert "
+                             f"(default: {SLOW_ELEMENT_SECONDS})")
+    parser.add_argument("--max-faces", type=int, default=None,
+                        help="Skip elements whose representation declares more faces than this. "
+                             "Off by default: it trades completeness for speed, and a handful of "
+                             "highly tessellated elements can be most of a run's time")
     parser.add_argument("--tolerance", type=float, default=1e-6,
                         help="Geometric tolerance")
 
@@ -171,7 +178,9 @@ Examples:
         "both": args.both,
         "parallel": args.parallel,  # Opt-in parallel processing
         "storey_index": args.storey,  # Add storey filter
-        "section_offset": args.section_offset
+        "section_offset": args.section_offset,
+        "slow_seconds": args.slow_element_seconds,
+        "max_faces": args.max_faces,
     }
 
     # Setup formatters
