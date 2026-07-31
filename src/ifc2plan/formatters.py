@@ -255,7 +255,7 @@ class FloorPlanImageFormatter(Formatter):
 
         # Calculate bounds with better padding
         all_bounds = []
-        for elem_type, elem_name, poly, room_type in polygons:
+        for elem_type, elem_name, poly, room_type, *_ in polygons:
             if poly and not poly.is_empty:
                 all_bounds.extend(poly.bounds)
 
@@ -276,7 +276,7 @@ class FloorPlanImageFormatter(Formatter):
         polygon_groups = {}
         room_type_groups = {}  # Track unique room types for legend
 
-        for elem_type, elem_name, poly, room_type in polygons:
+        for elem_type, elem_name, poly, room_type, *_ in polygons:
             if elem_type not in polygon_groups:
                 polygon_groups[elem_type] = []
             polygon_groups[elem_type].append((elem_name, poly, room_type))
@@ -538,9 +538,16 @@ class FloorWKTFormatter(Formatter):
     def process(self, name: str, elements: list, polygons: List[Tuple[str, str, Polygon, str]]):
         """Export polygons as WKT with room type information"""
 
-        data = {"type": [], "name": [], "room_type": [], "geometry": []}
+        data = {"type": [], "name": [], "room_type": [],
+                "room_type_original": [], "geometry": []}
 
-        for elem_type, elem_name, poly, room_type in polygons:
+        for row in polygons:
+            # room_type_original is optional so older callers passing a 4-tuple
+            # still work; it carries the untranslated room name, which is the only
+            # record of rooms missing from the naming conversion.
+            elem_type, elem_name, poly, room_type = row[:4]
+            room_type_original = row[4] if len(row) > 4 else ""
+
             if poly is None or poly.is_empty:
                 continue
 
@@ -549,6 +556,7 @@ class FloorWKTFormatter(Formatter):
             data["type"].append(elem_type)
             data["name"].append(elem_name)
             data["room_type"].append(room_type)
+            data["room_type_original"].append(room_type_original)
 
         if data["type"]:
             df = pd.DataFrame(data)

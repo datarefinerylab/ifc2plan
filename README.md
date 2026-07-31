@@ -114,6 +114,11 @@ output/
     ...
 ```
 
+The CSV columns are `type`, `name`, `room_type`, `room_type_original`, `geometry`.
+`room_type` is the converted and normalised value; `room_type_original` is the room's
+name exactly as the model gives it, so rooms with no entry in the naming conversion are
+still identifiable.
+
 ## Room Naming Conversion
 
 Create a CSV file with room name translations (e.g., Dutch to English):
