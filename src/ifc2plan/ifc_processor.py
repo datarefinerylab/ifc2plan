@@ -460,7 +460,7 @@ def _polygon_from_edges(shape):
     it fails silently by producing a self-intersecting shape rather than an error.
     Following the edges removes the assumption.
 
-    Returns None when the edges do not close into exactly one ring, leaving the
+    Returns None when the edges close into no usable ring at all, leaving the
     caller to fall back on vertex order.
     """
     try:
@@ -472,10 +472,41 @@ def _polygon_from_edges(shape):
         lines = [LineString([verts[a][:2], verts[b][:2]]) for a, b in edges]
         rings = [p for p in polygonize(unary_union(lines))
                  if p.is_valid and p.area > 1e-6]
-
-        if len(rings) != 1:
+        if not rings:
             return None
-        return rings[0]
+
+        # A footprint with a courtyard, atrium or service shaft closes into more
+        # than one ring: polygonize returns the outline already carrying the hole
+        # as an interior, *plus* the hole again as a filled ring of its own.
+        # Requiring exactly one ring rejected that correct result and sent the
+        # caller to the vertex-order fallback, which concatenates the loops into
+        # one self-intersecting list - so buffer(0) produced a shape matching
+        # neither the outline-with-hole nor the outline alone, and it passed
+        # every check in space_outline_polygon. Drop the rings that sit inside
+        # another ring's hole and keep the outlines.
+        filled = [Polygon(p.exterior) for p in rings]
+        points = [p.representative_point() for p in rings]
+        outlines = [p for i, p in enumerate(rings)
+                    if not any(j != i and filled[j].contains(points[i])
+                               for j in range(len(rings)))]
+        if not outlines:
+            return None
+
+        # What survives can still be several *adjacent* faces rather than one
+        # outline: any edge crossing the interior - an internal divider, or a
+        # solid clipped by a roof or stair - splits the footprint into tiles
+        # that are all equally "outer". Taking the largest would return one tile
+        # and call half a room a whole one, so merge them first. The union runs
+        # after the containment filter, not before: unioning the raw rings would
+        # weld each hole back into its outline and quietly fill the courtyard in.
+        merged = unary_union(outlines)
+        if merged.geom_type == "Polygon":
+            return merged
+
+        # Genuinely disjoint parts of one IfcSpace. One polygon per space is all
+        # the rest of the pipeline carries, so take the largest - still a real
+        # outline, unlike the self-intersecting fallback.
+        return max(outlines, key=lambda p: p.area)
     except Exception:
         return None
 
@@ -497,7 +528,11 @@ def space_outline_polygon(space, settings):
     try:
         shape = ifcopenshell.geom.create_shape(settings, space)
     except Exception as e:
-        return None, f"create_shape failed: {str(e).splitlines()[0][:80]}"
+        # An exception with a blank message splitlines() to [], so indexing it
+        # raised out of the handler whose whole job is to keep one unreadable
+        # space from taking the file down.
+        detail = (str(e).splitlines() or [type(e).__name__])[0]
+        return None, f"create_shape failed: {detail[:80]}"
 
     polygon = _polygon_from_edges(shape)
     if polygon is None:
@@ -638,11 +673,18 @@ def get_elements_and_shapes(model, ifc_path, filter_fn=None, filter_expr=None, m
                 'Success': f'{success_rate:.1f}%'
             })
 
+    # A filter matching nothing is reachable now that spaces are excluded from
+    # the mesh pass: a storey holding only IfcSpace leaves it empty. Percentages
+    # of nothing raised ZeroDivisionError, and process_ifc_file catches per file,
+    # so one such storey took every remaining storey of that file down with it.
+    total = len(elements)
+    pct = (lambda n: f"{n / total * 100:.1f}%") if total else (lambda n: "n/a")
+
     print(f"\n✅ Processing complete!")
-    print(f"   📊 Total processed: {len(elements)}")
-    print(f"   ✅ Valid geometries: {len(valid_elements)} ({(len(valid_elements) / len(elements) * 100):.1f}%)")
-    print(f"   ❌ Failed conversions: {failed_count} ({(failed_count / len(elements) * 100):.1f}%)")
-    print(f"   ⭐️ Skipped (no representation): {skipped_count} ({(skipped_count / len(elements) * 100):.1f}%)")
+    print(f"   📊 Total processed: {total}")
+    print(f"   ✅ Valid geometries: {len(valid_elements)} ({pct(len(valid_elements))})")
+    print(f"   ❌ Failed conversions: {failed_count} ({pct(failed_count)})")
+    print(f"   ⭐️ Skipped (no representation): {skipped_count} ({pct(skipped_count)})")
 
     return valid_elements, meshes
 
@@ -781,13 +823,18 @@ def process_storeys(context):
         def storey_filter(el):
             return el.id() in storey_element_ids and (not filter_fn or filter_fn(el))
 
-        elements, meshes = get_elements_and_shapes(
-            model,
-            ifc_path,
-            filter_fn=storey_filter,
-            max_elements=context.get("max_elements"),
-            parallel=context.get("parallel", True)
-        )
+        if storey_element_ids:
+            elements, meshes = get_elements_and_shapes(
+                model,
+                ifc_path,
+                filter_fn=storey_filter,
+                max_elements=context.get("max_elements"),
+                parallel=context.get("parallel", True)
+            )
+        else:
+            # Nothing but spaces on this storey, so the mesh pass has no work to
+            # do. Its outlines are still extracted below.
+            elements, meshes = [], []
 
         print(f"Loaded {len(elements)} elements with valid geometry")
 
