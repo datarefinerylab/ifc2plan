@@ -1,6 +1,7 @@
 import os
 
 import ifcopenshell
+import ifcopenshell.geom
 import ifcopenshell.util.element
 import ifcopenshell.util.shape
 import ifcopenshell.util.unit
