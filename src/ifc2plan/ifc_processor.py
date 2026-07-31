@@ -602,6 +602,8 @@ def process_storeys(context):
 
         level_polygons = []
 
+        processor.engine.reset_stats()
+
         for element, mesh in zip(elements, meshes):
             room_type = get_room_type(element, naming_conversion=context.get("naming_conversion"))
 
@@ -621,6 +623,13 @@ def process_storeys(context):
 
         if level_polygons:
             print(f"  Found {len(level_polygons)} intersections")
+
+            stats = processor.engine.stats
+            if stats["open_fragments"] or stats["unusable_rings"]:
+                print(f"  ⚠️  Discarded section geometry on "
+                      f"{stats['elements_affected']} element(s): "
+                      f"{stats['open_fragments']} open fragment(s), "
+                      f"{stats['unusable_rings']} unusable ring(s)")
 
             for formatter in context["formatters"]:
                 formatter.process(name, storey_elements, level_polygons)

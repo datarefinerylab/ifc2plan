@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from typing import List, Tuple, Optional, Union
 import numpy as np
 from shapely.geometry import Polygon, MultiPolygon
-from shapely.ops import unary_union
+from shapely.strtree import STRtree
 import trimesh
 
 
@@ -33,6 +33,15 @@ class ShapelyTrimeshEngine(GeometryEngine):
 
     def __init__(self):
         self.tolerance = 1e-6
+        self.reset_stats()
+
+    def reset_stats(self):
+        """Reset the per-run counters reported in the storey summary"""
+        self.stats = {
+            "open_fragments": 0,   # section entities not part of any closed loop
+            "unusable_rings": 0,   # closed loops that yielded no valid polygon
+            "elements_affected": 0,  # elements that lost at least one of the above
+        }
 
     def create_polygon_from_points(self, points: List[Tuple[float, float]]) -> Polygon:
         """Create a polygon from a list of 2D points"""
@@ -48,7 +57,19 @@ class ShapelyTrimeshEngine(GeometryEngine):
     def intersect_with_plane(self, mesh: trimesh.Trimesh, plane_origin: Tuple[float, float, float],
                              plane_normal: Tuple[float, float, float]) -> List[Polygon]:
         """
-        Intersect a 3D mesh with a plane and return 2D polygons
+        Intersect a 3D mesh with a plane and return 2D polygons.
+
+        Each solid of the mesh is sectioned on its own. An IFC element is usually
+        several solids that touch - a door is a leaf, two frame jambs, stops,
+        glazing beads - and they share corner points where they meet. Sectioning
+        the whole mesh at once lets trimesh's path builder weld those shared points
+        and trace a single chain that hops from one solid to the next across the air
+        between them. That chain does not close, and forcing it shut invents an edge
+        that is in no solid: on storey 3 of the example file it produced 38 open
+        chains with gaps up to 914 mm, and two "doors" that were bare triangles.
+
+        Sectioning per solid removes the opportunity: every loop then closes on its
+        own.
         """
         try:
             # Convert to numpy arrays and normalize
@@ -56,100 +77,231 @@ class ShapelyTrimeshEngine(GeometryEngine):
             plane_normal = np.array(plane_normal, dtype=float)
             plane_normal = plane_normal / np.linalg.norm(plane_normal)
 
-            # Use trimesh's section method - this is the key replacement for OCC
-            slice_2d = mesh.section(plane_origin=plane_origin, plane_normal=plane_normal)
-
-            if slice_2d is None:
-                return []
-
             polygons = []
+            # Tracked across the whole element: an element with 20 solids that
+            # loses geometry in 5 of them is one affected element, not five.
+            affected = False
 
-            # Handle different trimesh section result types
-            if hasattr(slice_2d, 'polygons_full') and slice_2d.polygons_full is not None:
-                # Newer trimesh versions
-                for polygon_data in slice_2d.polygons_full:
-                    if len(polygon_data) >= 3:
-                        poly = self._create_valid_polygon(polygon_data)
-                        if poly is not None:
-                            polygons.append(poly)
+            for solid in self._solids(mesh):
+                # split() can hand back a solid with no faces, whose bounds are
+                # None. Handle it per solid: one empty solid must not abort the
+                # rest of the element, or a good part disappears with it.
+                try:
+                    bounds = solid.bounds
+                    if bounds is None:
+                        continue
 
-            elif hasattr(slice_2d, 'entities') and len(slice_2d.entities) > 0:
-                # Handle Path2D with entities
-                vertices_2d = slice_2d.vertices
-                for entity in slice_2d.entities:
-                    if hasattr(entity, 'points') and len(entity.points) >= 3:
-                        points = vertices_2d[entity.points]
-                        poly = self._create_valid_polygon(points)
-                        if poly is not None:
-                            polygons.append(poly)
+                    low, high = bounds[0][2], bounds[1][2]
+                    if not (low <= plane_origin[2] <= high):
+                        continue
 
-            elif hasattr(slice_2d, 'vertices') and len(slice_2d.vertices) >= 3:
-                # Simple case - vertices form a single polygon
-                poly = self._create_valid_polygon(slice_2d.vertices)
-                if poly is not None:
-                    polygons.append(poly)
+                    section = solid.section(plane_origin=plane_origin,
+                                            plane_normal=plane_normal)
+                    if section is None:
+                        continue
 
-            # Post-process polygons to match OCC behavior
+                    # Stitch this solid's line entities into closed loops, then
+                    # work out which loops are holes inside which others.
+                    rings, lost = self._closed_rings(section)
+                    affected = affected or lost
+                    polygons.extend(self._assemble_with_holes(rings))
+
+                except Exception as e:
+                    print(f"Warning: Failed to section one solid: {e}")
+                    continue
+
+            if affected:
+                self.stats["elements_affected"] += 1
+
             return self._postprocess_polygons(polygons)
 
         except Exception as e:
             print(f"Warning: Failed to intersect mesh with plane: {e}")
             return []
 
-    def _create_valid_polygon(self, points: np.ndarray) -> Optional[Polygon]:
-        """Create a valid polygon from points, handling edge cases"""
+    def _solids(self, mesh: trimesh.Trimesh) -> List[trimesh.Trimesh]:
+        """
+        Split a mesh into the separate solids it is made of.
+
+        This relies on the mesh having been built with process=False, so that
+        vertices belonging to different solids were never welded together and the
+        solids are still separate connected components. See process_ifc_element.
+        """
         try:
-            if len(points) < 3:
-                return None
-
-            # Convert to 2D if needed (take only x,y coordinates)
-            if points.shape[1] > 2:
-                points = points[:, :2]
-
-            # Create polygon
-            poly = Polygon(points)
-
-            # Validate and fix if needed
-            if not poly.is_valid:
-                # Try to fix invalid polygons
-                poly = poly.buffer(0)
-                if not poly.is_valid:
-                    return None
-
-            # Check minimum area
-            if poly.area < self.tolerance:
-                return None
-
-            return poly
-
+            solids = mesh.split(only_watertight=False)
         except Exception:
-            return None
+            solids = []
+
+        return list(solids) if len(solids) else [mesh]
+
+    def _closed_rings(self, section: trimesh.path.Path3D) -> Tuple[List[Polygon], bool]:
+        """
+        Closed loops of a section, as 2D polygons in world XY, plus whether any
+        geometry was discarded. This runs once per solid, so the caller is the
+        only place that knows where one element ends and the next begins.
+
+        `section.discrete` walks the section's line entities and joins them into
+        closed loops, which is what an element outline actually is. Taking each
+        entity on its own instead (as this used to) turns one door into a pile of
+        disconnected fragments.
+
+        Coordinates stay in world XY on purpose: `section.to_2D()` re-origins onto
+        the cutting plane's own frame, and every downstream consumer - WKT output,
+        image formatter, room lookup - expects world coordinates.
+        """
+        try:
+            loops = section.discrete
+        except Exception:
+            loops = []
+
+        rings = []
+        unusable = 0
+        for loop in loops:
+            polys = self._polygons_from_ring(np.asarray(loop))
+            if polys:
+                rings.extend(polys)
+            else:
+                unusable += 1
+
+        # Entities that never closed into a loop are dangling fragments. The old
+        # code dropped them with a bare `len(points) >= 3` guard; count them so a
+        # run that quietly loses geometry says so.
+        used = set()
+        for path in getattr(section, "paths", []):
+            used.update(int(i) for i in path)
+        open_fragments = max(len(section.entities) - len(used), 0)
+
+        self.stats["open_fragments"] += open_fragments
+        self.stats["unusable_rings"] += unusable
+
+        return rings, bool(open_fragments or unusable)
+
+    def _polygons_from_ring(self, points: np.ndarray) -> List[Polygon]:
+        """
+        Turn one closed loop into zero or more valid polygons.
+
+        A self-intersecting loop is repaired with buffer(0), which can legitimately
+        split it into several pieces - hence a list rather than a single polygon.
+        """
+        if len(points) < 3:
+            return []
+
+        if points.ndim != 2:
+            return []
+
+        # Drop Z: the section plane is horizontal, so world XY is the plan view
+        if points.shape[1] > 2:
+            points = points[:, :2]
+
+        try:
+            poly = Polygon(points)
+            if not poly.is_valid:
+                poly = poly.buffer(0)
+        except Exception:
+            return []
+
+        if poly.is_empty or not poly.is_valid:
+            return []
+
+        parts = list(poly.geoms) if isinstance(poly, MultiPolygon) else [poly]
+        return [p for p in parts if isinstance(p, Polygon) and p.area > self.tolerance]
+
+    def _assemble_with_holes(self, rings: List[Polygon]) -> List[Polygon]:
+        """
+        Nest rings into shells with interiors, using even-odd containment depth.
+
+        A ring contained by an even number of other rings is a shell; one contained
+        by an odd number is a hole in its smallest containing shell. This is the
+        same rule trimesh's `polygons_full` applies, but built on Shapely's STRtree
+        so it needs no `rtree`/libspatialindex native dependency.
+        """
+        if len(rings) <= 1:
+            return rings
+
+        tree = STRtree(rings)
+
+        depth = [0] * len(rings)
+        parent = [None] * len(rings)
+
+        # Containment is tested on the whole ring, not on a point inside it. A
+        # representative point of the OUTER ring of a hollow section lands inside
+        # the inner ring, which made both rings look enclosed, classified both as
+        # holes and dropped the element entirely - every tube and hollow column
+        # disappeared from the output.
+        # The area guard keeps duplicate rings from enclosing each other.
+        for i, ring in enumerate(rings):
+            for j in tree.query(ring):
+                j = int(j)
+                if j == i or rings[j].area <= ring.area:
+                    continue
+                if not rings[j].contains(ring):
+                    continue
+                depth[i] += 1
+                if parent[i] is None or rings[j].area < rings[parent[i]].area:
+                    parent[i] = j
+
+        result = []
+        for i, ring in enumerate(rings):
+            if depth[i] % 2 != 0:
+                continue  # a hole; attached to its shell below
+
+            holes = [
+                rings[k].exterior.coords
+                for k in range(len(rings))
+                if parent[k] == i and depth[k] == depth[i] + 1
+            ]
+
+            # A ring repaired by buffer(0) in _polygons_from_ring can arrive
+            # already carrying interiors. Rebuilding it from its exterior alone
+            # would fill those back in and over-state the section's area.
+            holes.extend(interior.coords for interior in ring.interiors)
+
+            poly = Polygon(ring.exterior.coords, holes) if holes else ring
+            if not poly.is_valid:
+                poly = poly.buffer(0)
+            result.extend(
+                p for p in (poly.geoms if isinstance(poly, MultiPolygon) else [poly])
+                if isinstance(p, Polygon) and p.area > self.tolerance
+            )
+
+        return result
 
     def _postprocess_polygons(self, polygons: List[Polygon]) -> List[Polygon]:
-        """Post-process polygons to match OCC behavior"""
-        if not polygons:
-            return []
+        """
+        Drop degenerate polygons and exact duplicates.
 
-        # Remove duplicates and merge overlapping polygons
-        valid_polygons = []
+        This used to unary_union everything "similar to how OCC handles wire
+        connections". The union welded a door's distinct sub-parts - leaf, frame
+        jambs, glazing beads, stops - into single L-, H- and ring-shaped polygons
+        wherever they touched, destroying rectangles that were already correct.
+
+        The union was compensating for the old entity-by-entity assembly, which
+        produced open and overlapping fragments. _assemble_with_holes now yields
+        properly closed, properly nested loops, so there is nothing left to
+        compensate for and parts stay parts.
+        """
+        result: List[Polygon] = []
+
         for poly in polygons:
-            if poly is not None and poly.is_valid and poly.area > self.tolerance:
-                valid_polygons.append(poly)
+            if poly is None or poly.is_empty or not poly.is_valid:
+                continue
+            if poly.area <= self.tolerance:
+                continue
 
-        if not valid_polygons:
-            return []
+            # Mesh triangulation leaves vertices sitting exactly on the segment
+            # between their neighbours. simplify(0) drops those and nothing else -
+            # the area is unchanged to floating point - so an outline is described
+            # by its corners rather than by every triangle edge that met it.
+            poly = poly.simplify(0)
+            if poly.is_empty or not poly.is_valid:
+                continue
 
-        # Merge overlapping polygons (similar to how OCC handles wire connections)
-        try:
-            union_result = unary_union(valid_polygons)
-            if isinstance(union_result, Polygon):
-                return [union_result]
-            elif isinstance(union_result, MultiPolygon):
-                return list(union_result.geoms)
-            else:
-                return valid_polygons
-        except Exception:
-            return valid_polygons
+            # Coincident faces in a mesh can section to the same loop twice
+            if any(poly.equals(kept) for kept in result):
+                continue
+            result.append(poly)
+
+        return result
 
     def get_polygon_area(self, polygon: Polygon) -> float:
         """Get the area of a polygon"""
@@ -281,8 +433,16 @@ class IFCGeometryProcessor:
             vertices = np.array(vertices).reshape(-1, 3)
             faces = np.array(faces).reshape(-1, 3)
 
-            # Create trimesh
-            mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
+            # process=False is load-bearing, not an optimisation. Trimesh's default
+            # processing welds vertices that sit at the same point, and in an IFC
+            # element those are the corners where separate solids touch - a door
+            # leaf against its frame. Welding them fuses distinct solids into one
+            # torn, non-manifold surface: door 670101 goes from 219 vertices, 20
+            # watertight solids and 0 broken faces to 128 vertices, 68 fragments
+            # and 234 broken faces. ifcopenshell has already welded vertices
+            # correctly within each solid (WELD_VERTICES above); doing it again
+            # across solids is what corrupts the mesh.
+            mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
 
             # Apply transformation matrix if available
             if hasattr(shape, 'transformation') and shape.transformation is not None:
