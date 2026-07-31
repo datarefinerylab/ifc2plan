@@ -121,9 +121,9 @@ def test_clean_room_type_prefix_is_idempotent():
     assert clean_room_type("remaining_keuken") == "remaining_keuken"
 
 
-@pytest.mark.xfail(reason="clean_room_type's docstring documents rules 1 and 2 that the "
-                          "code never implements; both values sit in KEEP_AS_IS, which is "
-                          "checked first and returns them unchanged",
+@pytest.mark.xfail(reason="open vocabulary question: should 'elevator shaft' collapse to "
+                          "'elevator' and 'cera' expand to its full name? Both sit in "
+                          "KEEP_AS_IS, so today they are returned unchanged",
                    strict=True)
 @pytest.mark.parametrize("value,expected", [
     ("elevator shaft", "elevator"),
@@ -131,26 +131,65 @@ def test_clean_room_type_prefix_is_idempotent():
 ])
 def test_documented_normalisation_rules(value, expected):
     """
-    Same shape as the LongName bug in #4: the docstring promises a step the
-    implementation skips. Either the rules should exist or the docstring should
-    stop claiming them - a vocabulary decision, so it is recorded rather than
-    silently changed.
+    These two rules were documented in clean_room_type's docstring but never
+    implemented - both values sit in KEEP_AS_IS, which is checked first.
+
+    The #10 rewrite dropped the claim from the docstring, so the docs no longer
+    describe behaviour that does not exist. That resolves the documentation half
+    only. Whether the normalisation *should* happen is a vocabulary decision
+    nobody has made, so it stays recorded here rather than being settled by
+    whoever happened to touch the file.
+
+    xfail(strict), so if the rules are ever implemented this fails loudly instead
+    of being forgotten.
     """
     assert clean_room_type(value) == expected
 
 
-@pytest.mark.xfail(reason="issue #10: KEEP_AS_IS has drifted from naming_conversion.csv, "
-                          "so successfully translated values are still flagged unmapped",
-                   strict=True)
 def test_translated_value_is_not_flagged_as_unmapped():
     """
-    naming_conversion.csv maps Entree -> entrance, yet the result comes back
-    remaining_entrance because 'entrance' is absent from KEEP_AS_IS. 'has a
-    remaining_ prefix' is therefore not a reliable test for 'was not translated'.
+    naming_conversion.csv maps Entree -> entrance. That used to come back as
+    remaining_entrance because 'entrance' is absent from KEEP_AS_IS, so "has a
+    remaining_ prefix" was not a reliable test for "was not translated" (#10).
 
-    xfail(strict) so this starts passing loudly the moment #10 is fixed.
+    Was an xfail(strict) from #11 until the fix landed.
     """
     assert get_room_type(FakeSpace(long_name="entree"), CONVERSION) == "entrance"
+
+
+def test_untranslated_value_still_gets_the_prefix():
+    """
+    The other half of #10, and the reason the prefix exists: a name with no entry
+    must still be flagged, or the fix would have made the signal useless rather
+    than accurate.
+    """
+    assert get_room_type(FakeSpace(long_name="keuken"), {}) == "remaining_keuken"
+
+
+def test_prefix_tracks_the_supplied_table_not_a_global_set():
+    """
+    The accepted vocabulary is per-run, since --naming-conversion is an argument.
+    The same name must be prefixed or not according to the table it was given -
+    which no hardcoded set can express, and which is why the fix keys off whether
+    the lookup hit rather than off KEEP_AS_IS membership.
+    """
+    space = FakeSpace(long_name="entree")
+
+    assert get_room_type(space, {"entree": "entrance"}) == "entrance"
+    assert get_room_type(space, {}) == "remaining_entree"
+
+
+def test_target_colliding_with_an_untranslated_name_is_unambiguous():
+    """
+    'gallery' is a target in the real table. A different room that is *named*
+    gallery, with no entry of its own, has not been translated and must still be
+    flagged - which membership-testing the target column would get wrong, and
+    asking the lookup gets right.
+    """
+    table = {"galerij": "gallery"}
+
+    assert get_room_type(FakeSpace(long_name="galerij"), table) == "gallery"
+    assert get_room_type(FakeSpace(long_name="gallery"), table) == "remaining_gallery"
 
 
 # ── naming conversion loading ────────────────────────────────────────────────

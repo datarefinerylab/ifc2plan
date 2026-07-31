@@ -33,19 +33,36 @@ KEEP_AS_IS = {
 KEEP_LOWER = {v.lower(): v for v in KEEP_AS_IS}
 
 
-def clean_room_type(room_type: str) -> str:
+def clean_room_type(room_type: str, translated: bool = False) -> str:
     """
     Clean and normalize room type names according to standardized rules.
 
-    Rules applied:
-      1. "elevator shaft" or "elevator" (case-insensitive)  → "elevator"
-      2. "cera" (case-insensitive)                          → "Central Energy Recovery Airflow"
-      3. Values in the KEEP_AS_IS set                       → unchanged
-      4. Non-empty values not matched above                 → prefix "remaining_"
-      5. Empty / blank values                               → unchanged (left empty)
+    Rules applied, in order:
+      1. Empty / blank values          → unchanged (left empty)
+      2. Values in the KEEP_AS_IS set  → unchanged (canonical casing)
+      3. Values the naming conversion produced (`translated=True`)
+                                       → unchanged
+      4. Anything else non-empty       → prefix "remaining_"
+
+    `remaining_` means "this room name has no entry in the naming conversion, so
+    somebody needs to add one". Rule 3 is what makes that true. Without it the
+    prefix landed on values the conversion had just successfully produced -
+    `naming_conversion.csv` maps `Entree,entrance`, and `entrance` came out as
+    `remaining_entrance` because KEEP_AS_IS happens not to list it. 18 of the 29
+    target values in that table are missing from KEEP_AS_IS, so the prefix was
+    pointing at the wrong rooms and "does this model translate cleanly?" could
+    not be answered from the output (#10).
+
+    Trusting the caller's `translated` flag rather than testing membership of the
+    table's target column also handles the case where a target value collides
+    with a genuinely untranslated name: what matters is whether *this* lookup
+    hit, not whether the string appears somewhere in the table.
+
+    KEEP_AS_IS is still consulted first, because it carries canonical casing.
 
     Args:
         room_type: Raw room type string
+        translated: True if this value came out of the naming conversion
 
     Returns:
         str: Cleaned room type value
@@ -64,6 +81,10 @@ def clean_room_type(room_type: str) -> str:
         return stripped
     if lower in KEEP_LOWER:
         return KEEP_LOWER[lower]   # return canonical casing from the set
+
+    # Rule: a value the conversion produced is by definition a known room type
+    if translated:
+        return stripped
 
     # Rule: everything else non-empty → prefix (idempotent: skip if already prefixed)
     if stripped.startswith("remaining_"):
@@ -256,12 +277,27 @@ def get_room_type(element, naming_conversion=None):
     naming_conversion_lower = {str(k).lower(): v for k, v in naming_conversion.items() if
                                k and not (isinstance(k, float) and k != k)}
 
-    def _map(value: str) -> str:
+    def _map(value: str):
+        """(value, whether the conversion table supplied it).
+
+        The caller needs the hit/miss, not just the result: `remaining_` is
+        supposed to mean "no entry in the conversion", and the only way to know
+        that is to ask the lookup rather than to inspect the value afterwards
+        (#10).
+        """
         value = (value or "").strip()
-        if not value:
-            return value
+        if not value or not naming_conversion_lower:
+            return value, False
+
         # Case-insensitive lookup
-        return naming_conversion_lower.get(value.lower(), value) if naming_conversion_lower else value
+        mapped = naming_conversion_lower.get(value.lower())
+
+        # A blank cell in the CSV reaches us as a float NaN via pandas, and
+        # treating that as a translation would put "nan" in the output.
+        if mapped is None or not isinstance(mapped, str) or not mapped.strip():
+            return value, False
+
+        return mapped.strip(), True
 
     def _first_word(value: str) -> str:
         value = (value or "").strip()
@@ -275,10 +311,10 @@ def get_room_type(element, naming_conversion=None):
         if 'Pset_SpaceCommon' in psets:
             reference = psets['Pset_SpaceCommon'].get('Reference', '')
             if reference:
-                roomtype = _map(_first_word(str(reference)))
+                roomtype, translated = _map(_first_word(str(reference)))
                 if roomtype:
                     # Apply room type cleaning/normalization
-                    return clean_room_type(roomtype)
+                    return clean_room_type(roomtype, translated)
     except:
         pass
 
@@ -289,14 +325,14 @@ def get_room_type(element, naming_conversion=None):
     # "Unknown". Matching on the first word is what makes 'slaapkamer 1' and
     # 'slaapkamer 2' resolve to the single 'slaapkamer' entry in the conversion.
     if getattr(element, "LongName", None):
-        roomtype = _map(_first_word(str(element.LongName)))
+        roomtype, translated = _map(_first_word(str(element.LongName)))
         if roomtype:
-            return clean_room_type(roomtype)
+            return clean_room_type(roomtype, translated)
 
     if hasattr(element, "ObjectType") and element.ObjectType:
-        roomtype = _map(_first_word(str(element.ObjectType)))
+        roomtype, translated = _map(_first_word(str(element.ObjectType)))
         # Apply room type cleaning/normalization
-        return clean_room_type(roomtype)
+        return clean_room_type(roomtype, translated)
 
     # Apply cleaning even to "Unknown"
     return clean_room_type("Unknown")
