@@ -37,19 +37,24 @@ Everything is passed around in a single `context` dict (args, engine, filter_fn,
 
 ## Running It
 
-Imports are flat (`from geometry_engine import ...`), so **the CLI only works from inside `src/ifc2plan/`**:
+Imports are flat (`from geometry_engine import ...`) and there is no packaging, so the
+script must be **invoked by its path** — Python then puts `src/ifc2plan/` on `sys.path`
+itself and the imports resolve. Running from the repo root is fine:
 
 ```bash
-cd src/ifc2plan
-python extract_floor_plans.py "../../examples/data/Shependomlaan/IFC Schependomlaan.ifc" --overview
-python extract_floor_plans.py "../../examples/data/Shependomlaan/IFC Schependomlaan.ifc" \
+python src/ifc2plan/extract_floor_plans.py "examples/data/Shependomlaan/IFC Schependomlaan.ifc" --overview
+python src/ifc2plan/extract_floor_plans.py "examples/data/Shependomlaan/IFC Schependomlaan.ifc" \
   --storey 0 --formatter image wkt --colored-spaces \
-  --naming-conversion ../../naming_conversion.csv --output ../../output
+  --naming-conversion naming_conversion.csv --output output
 ```
 
-The README's examples assume this too, without saying so.
+What does *not* work is a bare `python extract_floor_plans.py` from anywhere but
+`src/ifc2plan/`, because the file is not there. (This file previously claimed the CLI
+only worked from inside `src/ifc2plan/`; that was wrong, and the README's examples were
+written around the mistaken version.)
 
-Geometry engine self-test: `cd src/ifc2plan && python geometry_engine.py`.
+Geometry engine self-test: `python src/ifc2plan/geometry_engine.py`. (CI runs it as
+`python geometry_engine.py` with `working-directory: src/ifc2plan`; both work.)
 
 ## Environment
 

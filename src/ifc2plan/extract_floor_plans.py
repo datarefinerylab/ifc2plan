@@ -130,7 +130,9 @@ Examples:
 
     # Performance
     parser.add_argument("--parallel", action="store_true",
-                        help="Enable parallel processing (experimental - may be slower for large IFC files)")
+                        help="Convert element geometry across multiple cores. Each worker "
+                             "holds its own copy of the model, so the pool is sized against "
+                             "available memory as well as core count")
     parser.add_argument("--max-elements", type=int, default=None,
                         help="Maximum number of elements to process (for testing large files)")
     parser.add_argument("--skip-failed", action="store_true",
