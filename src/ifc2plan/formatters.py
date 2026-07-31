@@ -20,6 +20,17 @@ class Formatter:
         """Process a floor level - to be implemented by subclasses"""
         raise NotImplementedError()
 
+    def record_output(self, path, detail=""):
+        """
+        Note a written file and report it as one short line.
+
+        The run collects these so it can list everything it produced at the
+        end; mid-run the absolute path was the longest line on screen and the
+        list of them was scattered between storeys.
+        """
+        self.context.setdefault("written_files", []).append(path)
+        print(f"  → {path.name}{detail}")
+
 
 class FloorPlanImageFormatter(Formatter):
     """Generate floor plan images using matplotlib (headless)"""
@@ -373,7 +384,7 @@ class FloorPlanImageFormatter(Formatter):
         plt.close()
 
         version_text = "colored" if colored_spaces else "black & white"
-        print(f"Saved {version_text} floor plan: {output_path}")
+        self.record_output(output_path, f"   ({version_text} floor plan)")
 
     def _draw_polygon(self, ax, poly, color, alpha, edge_color, line_weight):
         """Draw a single polygon with proper styling"""
@@ -562,4 +573,4 @@ class FloorWKTFormatter(Formatter):
             df = pd.DataFrame(data)
             output_path = self.context["output_dir"] / f"{name}_floor_plan.csv"
             df.to_csv(output_path, index=False)
-            print(f"Saved WKT data: {output_path} ({len(data['type'])} elements)")
+            self.record_output(output_path, f"   ({len(data['type'])} geometries)")

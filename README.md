@@ -63,6 +63,19 @@ To use your own model, put its path in place of the example. **Start with `--ove
 then one storey** — a whole building takes a while, and there is no point waiting for it
 until you know the settings are right. Leave `--storey` off to do every storey.
 
+`--storey` takes more than one number, so you rarely have to run the command twice:
+
+| You type | You get |
+|----------|---------|
+| `--storey 1` | just that storey |
+| `--storey 0,2` | those two |
+| `--storey 1-3` | storeys 1, 2 and 3 |
+| `--storey begane` | every storey whose name contains "begane" — copy it off the `--overview` list |
+| `--storey all` | the whole building (same as leaving it off) |
+
+If you mistype it, the command stops and prints the storeys the model actually has,
+so you can fix the line without going back to `--overview`.
+
 > **On the long command:** always type the full `src/ifc2plan/extract_floor_plans.py`.
 > The short `python extract_floor_plans.py` fails unless you have moved into that folder
 > first. If you get `can't open file` or `ModuleNotFoundError`, this is why.
@@ -72,7 +85,7 @@ until you know the settings are right. Leave `--storey` off to do every storey.
 | Option | What it does | Default |
 |--------|--------------|---------|
 | `--overview` | List storeys and element counts, then stop. Costs nothing — always start here | off |
-| `--storey N` | Do one storey only. `N` is the number shown by `--overview`, counting from 0 | all storeys |
+| `--storey` | Which storeys to draw — a number from `--overview`, a list (`0,2`), a range (`1-3`), part of a storey's name, or `all` | all storeys |
 | `--formatter` | What to write: `image`, `wkt`, or both (`--formatter image wkt`) | `wkt` |
 | `--output` | Folder to write into | `output` |
 | `--style` | Look of the drawing: `professional`, `minimal`, `colorful`, `technical` | `professional` |

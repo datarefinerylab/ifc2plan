@@ -1,4 +1,6 @@
 import os
+import re
+import sys
 
 import ifcopenshell
 import ifcopenshell.geom
@@ -93,6 +95,21 @@ def clean_room_type(room_type: str, translated: bool = False) -> str:
     return "remaining_" + stripped
 
 
+def progress(iterable, desc, total=None, leave=True):
+    """
+    A tqdm bar that stays silent when stderr is not a terminal.
+
+    The element bar calls set_postfix per element, which forces a redraw; with
+    no terminal to rewrite in place that wrote one full-width bar line per
+    element - 150 lines for a 150-element storey - and buried the warnings that
+    follow it. Interactive runs are unaffected.
+    """
+    return tqdm(iterable, desc=desc, total=total, leave=leave,
+                disable=not sys.stderr.isatty(),
+                bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} '
+                           '[{elapsed}<{remaining}] {postfix}')
+
+
 def storey_decomposition(storey):
     """
     The elements of a storey, in a stable order.
@@ -115,92 +132,167 @@ def storey_decomposition(storey):
     return sorted(get_decomposition(storey), key=lambda element: element.id())
 
 
+def storey_rows(model, unit_scale):
+    """
+    One summary row per storey: (index, name, elevation_m, elements, spaces).
+
+    Elevations are converted to metres here. IfcBuildingStorey.Elevation is in
+    raw model units - 3000 in a millimetre file - which read next to
+    --section-offset in metres invites a real mistake.
+
+    Spaces are counted over the raw decomposition, without the representation
+    filter applied to the element count, because that is exactly the set
+    --space-only iterates.
+    """
+    rows = []
+
+    for idx, storey in enumerate(model.by_type("IfcBuildingStorey")):
+        name = storey.Name or f"Storey_{storey.id()}"
+        decomposition = storey_decomposition(storey)
+        products = [el for el in decomposition
+                    if el.is_a("IfcProduct") and el.Representation is not None]
+        spaces = sum(1 for el in decomposition if el.is_a("IfcSpace"))
+
+        rows.append((idx, name, storey_elevation_metres(storey, unit_scale),
+                     len(products), spaces))
+
+    return rows
+
+
+def format_storey_table(rows, indent="  "):
+    """Render storey_rows() as an aligned table. Shared by --overview and errors."""
+    if not rows:
+        return f"{indent}(no IfcBuildingStorey found)"
+
+    width = max(len(name) for _, name, _, _, _ in rows)
+    width = max(min(width, 40), len("name"))
+
+    lines = [f"{indent}{'idx':>4}  {'name':<{width}}  {'elevation':>11}  "
+             f"{'elements':>8}  {'spaces':>6}"]
+
+    for idx, name, elevation, elements, spaces in rows:
+        label = name if len(name) <= width else name[:width - 1] + "…"
+        lines.append(f"{indent}{f'[{idx}]':>4}  {label:<{width}}  "
+                     f"{elevation:>9.2f} m  {elements:>8}  {spaces:>6}")
+
+    return "\n".join(lines)
+
+
 def print_ifc_overview(ifc_path):
     """
-    Print a detailed overview of IFC file contents without processing geometry.
-    Shows project info, total counts, and per-storey breakdown.
+    Print an overview of IFC file contents without processing geometry.
+
+    The storey table comes first and is the point of this command: it is what
+    you read to choose a --storey. Model-wide element counts follow it.
 
     Args:
         ifc_path: Path to IFC file
     """
     model = ifcopenshell.open(ifc_path)
+    unit_scale = ifcopenshell.util.unit.calculate_unit_scale(model)
 
-    # Get project info
     project = model.by_type("IfcProject")[0] if model.by_type("IfcProject") else None
     building = model.by_type("IfcBuilding")[0] if model.by_type("IfcBuilding") else None
 
-    print("\n" + "=" * 60)
-    print("IFC FILE OVERVIEW")
-    print("=" * 60)
-
-    if project:
-        print(f"Project: {project.Name or 'N/A'}")
-    if building:
-        print(f"Building: {building.Name or 'N/A'}")
-
-    # Get schema version
-    schema = model.schema
-    print(f"Schema: {schema}")
-
-    # Get all products (elements)
     all_products = model.by_type("IfcProduct")
+    rows = storey_rows(model, unit_scale)
 
-    # Count by type
+    print()
+    if project:
+        print(f"Project   {project.Name or 'N/A'}")
+    if building:
+        print(f"Building  {building.Name or 'N/A'}")
+    print(f"Schema    {model.schema}   "
+          f"1 model unit = {unit_scale:g} m   "
+          f"{len(rows)} storeys, {len(all_products)} elements")
+
+    print(f"\nStoreys")
+    print(format_storey_table(rows))
+
+    print(f"\nElement types")
     type_counts = Counter(el.is_a() for el in all_products)
-
-    # Get storeys
-    storeys = list(model.by_type("IfcBuildingStorey"))
-
-    print(f"\nTotal Storeys: {len(storeys)}")
-    print(f"Total Elements: {len(all_products)}")
-
-    # Overall element types
-    print(f"\nElement Types (Overall):")
     for element_type, count in type_counts.most_common():
-        print(f"  {element_type}: {count}")
+        print(f"  {element_type:<28} {count:>6}")
 
-    # Per-storey details
-    if storeys:
-        print(f"\nStorey Details:\n")
+    if rows:
+        print(f"\nNext")
+        print(f"  --storey {rows[0][0]}       cut one storey")
+        print(f"  --storey all     cut every storey")
 
-        for idx, storey in enumerate(storeys):
-            name = storey.Name or f"Storey_{storey.id()}"
-            long_name = storey.LongName if hasattr(storey, 'LongName') and storey.LongName else name
+        # Name example: the first word that is not a bare number, since a
+        # numeric one ('-1 fundering' -> '-1') would be read as an index.
+        words = [word for _, name, _, _, _ in rows for word in name.split()
+                 if not re.fullmatch(r"-?\d+", word)]
+        if words:
+            print(f"  --storey {words[0]!r}    select by name instead of index")
+    print()
 
-            # Get elevation
-            elevation = storey.Elevation if hasattr(storey, 'Elevation') and storey.Elevation else 0.0
 
-            # Get elements in this storey
-            storey_elements = storey_decomposition(storey)
+class StoreySelectionError(ValueError):
+    """
+    A --storey value that names no storey.
 
-            # Filter to only products with representation
-            storey_products = [el for el in storey_elements
-                               if el.is_a("IfcProduct") and el.Representation is not None]
+    Its own class so the CLI can exit non-zero on it. A mistyped selection used
+    to print a message and exit 0, which in a scripted run is indistinguishable
+    from a model that legitimately produced nothing.
+    """
 
-            # Count by type
-            storey_type_counts = Counter(el.is_a() for el in storey_products)
 
-            print(f"  [{idx}] {name}")
-            if long_name != name:
-                print(f"      Long Name: {long_name}")
-            print(f"      Elevation: {elevation:.2f}")
-            print(f"      Elements: {len(storey_products)}")
+def resolve_storey_selection(storeys, spec):
+    """
+    Turn a --storey value into a list of storey indices, in storey order.
 
-            if storey_type_counts:
-                print(f"      Element Types:")
-                # Show top 5 types
-                top_types = storey_type_counts.most_common(5)
-                for element_type, count in top_types:
-                    print(f"        {element_type}: {count}")
+    Accepts an index (``2``), a comma-separated list (``0,2``), an inclusive
+    range (``1-3``), the word ``all``, or a case-insensitive substring of the
+    storey name (``begane``) - so a name read off the --overview table can be
+    pasted straight back in. None means every storey.
 
-                # Show count of remaining types
-                remaining = len(storey_type_counts) - len(top_types)
-                if remaining > 0:
-                    print(f"        ... and {remaining} more types")
+    Raises ValueError carrying the storey table, so a mistyped selection shows
+    the valid ones instead of sending you back to --overview.
+    """
+    names = [s.Name or f"Storey_{s.id()}" for s in storeys]
 
-            print()  # Empty line between storeys
+    def fail(message):
+        listing = "\n".join(f"    [{i}] {n}" for i, n in enumerate(names))
+        raise StoreySelectionError(f"{message}\n  Available storeys:\n{listing}")
 
-    print("=" * 60 + "\n")
+    if spec is None or str(spec).strip().lower() == "all":
+        return list(range(len(storeys)))
+
+    selected = []
+
+    for part in str(spec).split(","):
+        part = part.strip()
+        if not part:
+            continue
+
+        if re.fullmatch(r"-?\d+", part):
+            index = int(part)
+            if index < 0 or index >= len(storeys):
+                fail(f"Storey index {index} is out of range (0-{len(storeys) - 1}).")
+            selected.append(index)
+
+        elif re.fullmatch(r"\d+\s*-\s*\d+", part):
+            low, high = (int(bound) for bound in part.split("-"))
+            if low > high:
+                fail(f"Storey range {part!r} runs backwards.")
+            if high >= len(storeys):
+                fail(f"Storey range {part!r} exceeds the last storey "
+                     f"({len(storeys) - 1}).")
+            selected.extend(range(low, high + 1))
+
+        else:
+            matches = [i for i, name in enumerate(names)
+                       if part.lower() in name.lower()]
+            if not matches:
+                fail(f"No storey name contains {part!r}.")
+            selected.extend(matches)
+
+    if not selected:
+        fail(f"Storey selection {spec!r} selected nothing.")
+
+    # Storey order, no duplicates: '1,0,1' and '0-1' mean the same run.
+    return sorted(set(selected))
 
 
 def default_filter():
@@ -756,11 +848,10 @@ def get_elements_and_shapes(model, ifc_path, filter_fn=None, filter_expr=None, m
         # Process in parallel
         with Pool(workers, initializer=_init_worker,
                   initargs=(str(ifc_path), slow_seconds, max_faces)) as pool:
-            results = list(tqdm(
+            results = list(progress(
                 pool.imap(_process_element_worker, element_ids),
-                total=len(element_ids),
                 desc="Converting elements",
-                bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]'
+                total=len(element_ids),
             ))
 
         # Collect results
@@ -784,8 +875,7 @@ def get_elements_and_shapes(model, ifc_path, filter_fn=None, filter_expr=None, m
         slow_elements = processor.slow_elements
         face_skipped = processor.skipped_elements
 
-        progress_bar = tqdm(elements, desc="Converting elements",
-                            bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}] {postfix}')
+        progress_bar = progress(elements, desc="Converting elements")
 
         for i, element in enumerate(progress_bar):
             if element.Representation is None:
@@ -913,24 +1003,22 @@ def process_storeys(context):
         print("⚠️  No building storeys found in IFC file")
         return
 
-    # Filter to specific storey if requested
-    storey_index = context.get("storey_index")
-    if storey_index is not None:
-        if storey_index < 0 or storey_index >= len(storeys):
-            print(f"❌ Error: Storey index {storey_index} out of range (0-{len(storeys) - 1})")
-            print(f"   Use --overview to see available storeys")
-            return
+    # A bad selection is a caller error, not an empty result: let it out so the
+    # CLI can say so and exit non-zero.
+    indices = resolve_storey_selection(storeys, context.get("storey_selection"))
 
-        print(f"📍 Processing only storey [{storey_index}]: {storeys[storey_index].Name}")
-        storeys = [storeys[storey_index]]
+    selected = [(index, storeys[index]) for index in indices]
+    if len(selected) == len(storeys):
+        print(f"Processing all {len(storeys)} storeys")
     else:
-        print(f"Found {len(storeys)} storeys")
+        print(f"Processing {len(selected)} of {len(storeys)} storeys: "
+              f"{', '.join(str(index) for index in indices)}")
 
     processor = IFCGeometryProcessor(context['engine'])
     space_settings = space_geometry_settings()
 
     # Process each storey individually (OPTIMIZATION: only load elements for current storey)
-    for idx, storey in enumerate(storeys):
+    for position, (idx, storey) in enumerate(selected, start=1):
         s0 = storey
         name = s0.Name or f"Level_{s0.id()}"
 
@@ -942,9 +1030,10 @@ def process_storeys(context):
         elevation = storey_elevation_metres(s0, unit_scale)
         section_height = elevation + section_offset
 
-        print(f"\n{'=' * 60}")
-        print(f"Processing storey: {name} at height {section_height:.2f}m")
-        print(f"{'=' * 60}")
+        print(f"\n{'─' * 66}")
+        print(f"[{position}/{len(selected)}]  storey [{idx}] {name}   "
+              f"elevation {elevation:.2f} m, cutting at {section_height:.2f} m")
+        print(f"{'─' * 66}")
 
         # Get elements for THIS storey only
         storey_elements = storey_decomposition(s0)
@@ -1109,26 +1198,26 @@ def process_storeys_space_only(context):
     # Process each storey
     storeys = list(model.by_type("IfcBuildingStorey"))
 
-    # Filter to specific storey if requested
-    storey_index = context.get("storey_index")
-    if storey_index is not None:
-        if storey_index < 0 or storey_index >= len(storeys):
-            print(f"❌ Error: Storey index {storey_index} out of range (0-{len(storeys) - 1})")
-            print(f"   Use --overview to see available storeys")
-            return
+    # A bad selection is a caller error, not an empty result: let it out so the
+    # CLI can say so and exit non-zero.
+    indices = resolve_storey_selection(storeys, context.get("storey_selection"))
 
-        print(f"📍 Processing only storey [{storey_index}]: {storeys[storey_index].Name}")
-        storeys = [storeys[storey_index]]
+    selected = [(index, storeys[index]) for index in indices]
+    if len(selected) == len(storeys):
+        print(f"Processing all {len(storeys)} storeys")
+    else:
+        print(f"Processing {len(selected)} of {len(storeys)} storeys: "
+              f"{', '.join(str(index) for index in indices)}")
 
     # Setup geometry settings ONCE (moved outside loop - OPTIMIZATION)
     settings = space_geometry_settings()
 
-    for s0 in storeys:
+    for position, (idx, s0) in enumerate(selected, start=1):
         name = s0.Name or f"Level_{s0.id()}"
 
-        print(f"\n{'=' * 60}")
-        print(f"Processing storey: {name}")
-        print(f"{'=' * 60}")
+        print(f"\n{'─' * 66}")
+        print(f"[{position}/{len(selected)}]  storey [{idx}] {name}")
+        print(f"{'─' * 66}")
 
         # Get all spaces in this storey
         storey_elements = storey_decomposition(s0)
@@ -1147,7 +1236,7 @@ def process_storeys_space_only(context):
         # and since get_room_type_from_space needed Pset_SpaceCommon.Reference -
         # which not one space in the example file has - that discarded every
         # space in the model before geometry was ever tried.
-        for space in tqdm(spaces, desc=f"Processing {name}", leave=False):
+        for space in progress(spaces, desc=f"Processing {name}", leave=False):
             polygon, reason = space_outline_polygon(space, settings)
 
             if polygon is None:
