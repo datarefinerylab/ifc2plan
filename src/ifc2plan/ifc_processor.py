@@ -71,6 +71,28 @@ def clean_room_type(room_type: str) -> str:
     return "remaining_" + stripped
 
 
+def storey_decomposition(storey):
+    """
+    The elements of a storey, in a stable order.
+
+    `get_decomposition` returns a **set**, so iteration order varies between
+    processes. Everything downstream preserves that order - the element loop, the
+    section loop, `level_polygons`, the CSV writer - so the same command over the
+    same file produced CSVs whose rows moved between runs (#9). The contents were
+    always identical as a set; only the order shifted.
+
+    That mattered because "run it against the example and diff against main" is
+    the verification this repo relies on, and it reported differences that were
+    not real. The failure mode is asymmetric: a reviewer who sees moved rows,
+    shrugs and says "just ordering" will eventually wave through a real one.
+
+    Sorting on `id()` is a total order with no tiebreak needed - IFC ids are
+    unique within a file - and it is stable across runs because it is a property
+    of the file rather than of the traversal.
+    """
+    return sorted(get_decomposition(storey), key=lambda element: element.id())
+
+
 def print_ifc_overview(ifc_path):
     """
     Print a detailed overview of IFC file contents without processing geometry.
@@ -127,7 +149,7 @@ def print_ifc_overview(ifc_path):
             elevation = storey.Elevation if hasattr(storey, 'Elevation') and storey.Elevation else 0.0
 
             # Get elements in this storey
-            storey_elements = get_decomposition(storey)
+            storey_elements = storey_decomposition(storey)
 
             # Filter to only products with representation
             storey_products = [el for el in storey_elements
@@ -845,7 +867,7 @@ def process_storeys(context):
         print(f"{'=' * 60}")
 
         # Get elements for THIS storey only
-        storey_elements = get_decomposition(s0)
+        storey_elements = storey_decomposition(s0)
 
         # Filter elements by type
         filter_fn = context.get("filter_fn")
@@ -1027,7 +1049,7 @@ def process_storeys_space_only(context):
         print(f"{'=' * 60}")
 
         # Get all spaces in this storey
-        storey_elements = get_decomposition(s0)
+        storey_elements = storey_decomposition(s0)
         spaces = [el for el in storey_elements if el.is_a("IfcSpace")]
 
         print(f"  Found {len(spaces)} IfcSpace elements")
