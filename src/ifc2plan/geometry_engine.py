@@ -78,6 +78,9 @@ class ShapelyTrimeshEngine(GeometryEngine):
             plane_normal = plane_normal / np.linalg.norm(plane_normal)
 
             polygons = []
+            # Tracked across the whole element: an element with 20 solids that
+            # loses geometry in 5 of them is one affected element, not five.
+            affected = False
 
             for solid in self._solids(mesh):
                 # split() can hand back a solid with no faces, whose bounds are
@@ -99,12 +102,16 @@ class ShapelyTrimeshEngine(GeometryEngine):
 
                     # Stitch this solid's line entities into closed loops, then
                     # work out which loops are holes inside which others.
-                    rings = self._closed_rings(section)
+                    rings, lost = self._closed_rings(section)
+                    affected = affected or lost
                     polygons.extend(self._assemble_with_holes(rings))
 
                 except Exception as e:
                     print(f"Warning: Failed to section one solid: {e}")
                     continue
+
+            if affected:
+                self.stats["elements_affected"] += 1
 
             return self._postprocess_polygons(polygons)
 
@@ -127,9 +134,11 @@ class ShapelyTrimeshEngine(GeometryEngine):
 
         return list(solids) if len(solids) else [mesh]
 
-    def _closed_rings(self, section: trimesh.path.Path3D) -> List[Polygon]:
+    def _closed_rings(self, section: trimesh.path.Path3D) -> Tuple[List[Polygon], bool]:
         """
-        Closed loops of a section, as 2D polygons in world XY.
+        Closed loops of a section, as 2D polygons in world XY, plus whether any
+        geometry was discarded. This runs once per solid, so the caller is the
+        only place that knows where one element ends and the next begins.
 
         `section.discrete` walks the section's line entities and joins them into
         closed loops, which is what an element outline actually is. Taking each
@@ -164,10 +173,8 @@ class ShapelyTrimeshEngine(GeometryEngine):
 
         self.stats["open_fragments"] += open_fragments
         self.stats["unusable_rings"] += unusable
-        if open_fragments or unusable:
-            self.stats["elements_affected"] += 1
 
-        return rings
+        return rings, bool(open_fragments or unusable)
 
     def _polygons_from_ring(self, points: np.ndarray) -> List[Polygon]:
         """
@@ -243,6 +250,11 @@ class ShapelyTrimeshEngine(GeometryEngine):
                 for k in range(len(rings))
                 if parent[k] == i and depth[k] == depth[i] + 1
             ]
+
+            # A ring repaired by buffer(0) in _polygons_from_ring can arrive
+            # already carrying interiors. Rebuilding it from its exterior alone
+            # would fill those back in and over-state the section's area.
+            holes.extend(interior.coords for interior in ring.interiors)
 
             poly = Polygon(ring.exterior.coords, holes) if holes else ring
             if not poly.is_valid:
