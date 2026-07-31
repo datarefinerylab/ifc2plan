@@ -3,22 +3,16 @@
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-> Extract geometric data (CSV/WKT) and 2D floor plans from IFC building models
+**Turn an IFC building model into 2D floor plans — as images you can look at, or as data you can analyse.**
 
-## Features
+For each storey of a model, ifc2plan cuts a horizontal section through the building and writes:
 
-📊 **Export geometric data** as WKT/CSV
-✨ **Professional floor plan images** with architectural styling
-🎨 **Multiple visual styles** (professional, minimal, colorful, technical)
-🌈 **Colored room type visualization** with customizable legends
-🏠 **Room naming conversion** (e.g., Dutch to English)
-⚡ **Batch processing** for multiple IFC files
-🔧 **Robust geometry engine** using Trimesh + Shapely    
+- a **floor plan image** (PNG), in one of four drawing styles, optionally coloured by room type
+- a **table of the shapes** (CSV), one row per element, so you can measure, count, or feed it into other tools
 
-## Installation
+## Install
 
-**Requirements:** Python 3.9+ — this is set by `ifcopenshell`, which no longer publishes
-wheels for 3.8. The test suite runs on 3.9 and 3.13.
+You need **Python 3.9 or newer**.
 
 ```bash
 git clone https://github.com/datarefinerylab/ifc2plan.git
@@ -27,142 +21,100 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-> [!NOTE]
-> The project is not packaged and its modules import each other by bare name
-> (`from geometry_engine import ...`), so **invoke the script by its path**
-> — `python src/ifc2plan/extract_floor_plans.py`. Python puts the script's own directory
-> on `sys.path`, which is what makes those imports resolve. A bare
-> `python extract_floor_plans.py` only works if you have already `cd`'d into
-> `src/ifc2plan/`.
+On Windows, use `.venv\Scripts\activate` instead of `source .venv/bin/activate`.
 
-## Quick Start
+## Run it
 
-A model is included, so these run as written on a fresh clone, from the repository root:
+Stay in the `ifc2plan` folder and give the **full path to the script**, exactly as shown below.
+An example building is included, so you can copy these lines as they are.
+
+**1. Look inside the file first.** This is instant — it lists the storeys and how many
+elements each one has, and tells you the storey numbers you'll need.
 
 ```bash
-EXAMPLE="examples/data/Shependomlaan/IFC Schependomlaan.ifc"
+python src/ifc2plan/extract_floor_plans.py "examples/data/Shependomlaan/IFC Schependomlaan.ifc" --overview
+```
 
-# Show file overview: storeys, element counts. Fast - no geometry processing.
-python src/ifc2plan/extract_floor_plans.py "$EXAMPLE" --overview
+**2. Draw one floor plan.**
 
-# Extract one storey as CSV/WKT (much faster than all storeys)
-python src/ifc2plan/extract_floor_plans.py "$EXAMPLE" --storey 2
+```bash
+python src/ifc2plan/extract_floor_plans.py "examples/data/Shependomlaan/IFC Schependomlaan.ifc" \
+  --storey 2 --formatter image
+```
 
-# Floor plan images with colored room types
-python src/ifc2plan/extract_floor_plans.py "$EXAMPLE" \
+**3. Draw it with rooms coloured by type, and get the data too.**
+
+```bash
+python src/ifc2plan/extract_floor_plans.py "examples/data/Shependomlaan/IFC Schependomlaan.ifc" \
   --storey 2 --formatter image wkt --colored-spaces \
   --naming-conversion naming_conversion.csv
 ```
 
-Output lands in `output/IFC Schependomlaan/`.
+Results appear in `output/IFC Schependomlaan/`.
 
-## Usage
+To use your own model, put its path in place of the example. **Start with `--overview`,
+then one storey** — a whole building takes a while, and there is no point waiting for it
+until you know the settings are right. Leave `--storey` off to do every storey.
 
-```bash
-# Basic usage: all storeys, WKT only, professional black & white style
-python src/ifc2plan/extract_floor_plans.py building.ifc
+> **On the long command:** always type the full `src/ifc2plan/extract_floor_plans.py`.
+> The short `python extract_floor_plans.py` fails unless you have moved into that folder
+> first. If you get `can't open file` or `ModuleNotFoundError`, this is why.
 
-# Extract only spaces with colored room types from one storey
-python src/ifc2plan/extract_floor_plans.py building.ifc \
-  --storey 0 \
-  --space-only \
-  --colored-spaces \
-  --naming-conversion naming_conversion.csv
+## Options
 
-# Generate both colored and black & white versions
-python src/ifc2plan/extract_floor_plans.py building.ifc \
-  --both \
-  --naming-conversion naming_conversion.csv
+| Option | What it does | Default |
+|--------|--------------|---------|
+| `--overview` | List storeys and element counts, then stop. Costs nothing — always start here | off |
+| `--storey N` | Do one storey only. `N` is the number shown by `--overview`, counting from 0 | all storeys |
+| `--formatter` | What to write: `image`, `wkt`, or both (`--formatter image wkt`) | `wkt` |
+| `--output` | Folder to write into | `output` |
+| `--style` | Look of the drawing: `professional`, `minimal`, `colorful`, `technical` | `professional` |
+| `--colored-spaces` | Give each room type its own colour (needs `--naming-conversion`) | off |
+| `--both` | Write a coloured *and* a black & white version | off |
+| `--space-only` | Draw only the rooms, leaving out walls, doors, and everything else | off |
+| `--naming-conversion` | CSV that translates room names — see [Room names](#room-names) | none |
+| `--width`, `--height` | Image size in pixels | `2048` |
+| `--section-offset` | How high above each floor to cut, in metres | `1.5` |
+| `--parallel` | Use several processor cores at once | off |
+| `--max-faces` | Skip unusually detailed elements to save time — see [If a run is slow](#if-a-run-is-slow) | none |
+| `--max-elements` | Stop after this many elements. Useful for a quick trial run on a big file | none |
+| `--slow-element-seconds` | Report any element that takes longer than this to convert | `5.0` |
+| `--skip-failed` | Keep going when an element fails instead of stopping | off |
 
-# Multiple outputs and styling for a specific storey
-python src/ifc2plan/extract_floor_plans.py building.ifc \
-  --storey 2 \
-  --output ./plans \
-  --formatter image wkt \
-  --style colorful \
-  --colored-spaces \
-  --width 4096
+## What you get
 
-# Batch process multiple files
-python src/ifc2plan/extract_floor_plans.py "buildings/*.ifc" --output ./all_plans
-```
-
-### Command Line Options
-
-| Option | Description | Default |
-|--------|-------------|---------|
-| `--overview` | Show IFC file overview without processing geometry | `False` |
-| `--storey INDEX` | Process only specific storey by index (0-based) | All storeys |
-| `--section-offset` | Cutting plane height above each storey's elevation, in metres | `1.5` |
-| `--output` | Output directory | `output` |
-| `--formatter` | Output format: `image`, `wkt` (space-separated) | `wkt` |
-| `--style` | Visual style: `professional`, `minimal`, `colorful`, `technical` | `professional` |
-| `--colored-spaces` | Color spaces by room type (requires naming conversion) | `False` |
-| `--both` | Generate both colored and black & white versions | `False` |
-| `--space-only` | Extract only IfcSpace elements | `False` |
-| `--naming-conversion` | CSV file for room name translation (format: `original,english`) | `None` |
-| `--width/--height` | Image dimensions (pixels) | `2048` |
-| `--max-elements` | Limit for large files (testing) | `None` |
-| `--slow-element-seconds` | Report any element slower than this to convert | `5.0` |
-| `--max-faces` | Skip elements declaring more faces than this (trades completeness for speed) | `None` |
-
-### When a run is unexpectedly slow
-
-Conversion time is usually concentrated in a very small number of heavily
-tessellated elements. On one storey of a real model, four elements out of 669
-accounted for 99% of the time — over half an hour, with nothing in the output
-saying which ones they were.
-
-Those elements are now named as they are converted, and summarised at the end of
-each storey:
-
-```
-   ⏱  Slow element: IfcCovering #462475 '47_GM_waterslag' (26,011 faces) took 157.8s
-
-   ⏱  4 slow element(s), 309s total:
-        157.8s  IfcCovering #462475 '47_GM_waterslag' (26,011 faces)
-         86.5s  IfcCovering #504259 '47_GM_waterslag' (26,011 faces)
-```
-
-If you do not need that geometry, `--max-faces` skips it. On the storey above,
-`--max-faces 12000` takes the mesh pass from **162 s to 5.6 s** at the cost of
-those four elements (655 meshes → 651).
-
-Pick the threshold from the report rather than guessing: the face count is a
-coarse proxy for cost, not a direct one. In that model a 10,239-face door
-converts in 0.66 s while a 15,736-face covering takes 23 s, so a limit set too
-low discards geometry without buying time. The flag is off by default for the
-same reason — it changes output.
-
-Face counts are read from the representation itself and cover tessellated bodies
-(`IfcPolygonalFaceSet`, `IfcTriangulatedFaceSet`), brep solids (`IfcFacetedBrep`
-and the rest of the `IfcManifoldSolidBrep` family), surface models, and mapped
-items wrapping any of those. Anything else counts as zero, so an element with an
-unrecognised body type is never skipped — a body type this does not know about
-makes the flag do less, never more. Swept solids such as `IfcExtrudedAreaSolid`
-have no declared face count and so are always converted.
-
-## Output Structure
+Files are named after the storey as the model names it, inside a folder named after the
+model. Running example 3 above gives you:
 
 ```
 output/
-└── building_name/
-    ├── Level_1_floor_plan.png          # Floor plan image (b&w by default)
-    ├── Level_1_floor_plan_colored.png  # Colored version (if --both or --colored-spaces)
-    ├── Level_1_floor_plan_bw.png       # Black & white version (if --both)
-    ├── Level_1_floor_plan.csv          # Geometric data (WKT format)
-    └── Level_2_floor_plan.png
-    ...
+└── IFC Schependomlaan/
+    ├── 01 eerste verdieping_floor_plan.png   # the drawing
+    └── 01 eerste verdieping_floor_plan.csv   # the data
 ```
 
-The CSV columns are `type`, `name`, `room_type`, `room_type_original`, `geometry`.
-`room_type` is the converted and normalised value; `room_type_original` is the room's
-name exactly as the model gives it, so rooms with no entry in the naming conversion are
-still identifiable.
+With `--both` you get two drawings per storey instead of one, marked `_colored` and `_bw`:
 
-## Room Naming Conversion
+```
+    ├── 01 eerste verdieping_floor_plan_colored.png
+    └── 01 eerste verdieping_floor_plan_bw.png
+```
 
-Create a CSV file with room name translations (e.g., Dutch to English):
+Each row of the CSV is one element, with these columns:
+
+| Column | Meaning |
+|--------|---------|
+| `type` | What it is in the model — `IfcWall`, `IfcSpace`, `IfcDoor`, … |
+| `name` | The element's name from the model |
+| `room_type` | The tidied, translated room type |
+| `room_type_original` | The room name exactly as the model spells it, so rooms you haven't translated are still identifiable |
+| `geometry` | The outline itself, as WKT — a text format that QGIS, PostGIS, Shapely, and R can all read directly |
+
+## Room names
+
+Models often name rooms in the local language. Give ifc2plan a two-column CSV and it will
+translate them, which is also what lets it colour rooms by type. `naming_conversion.csv`
+in this repository is a Dutch → English starting point:
 
 ```csv
 original,english
@@ -175,94 +127,113 @@ berging,storage
 balkon,balcony
 ```
 
-Then use it with:
-```bash
-python src/ifc2plan/extract_floor_plans.py building.ifc \
-  --colored-spaces --naming-conversion naming_conversion.csv
-```
+Add your own rows in the same format. Matching ignores capitals. Rooms with no matching
+row still appear in the output — you'll see them under their original name in the
+`room_type_original` column.
 
-## Visual Styles
+## Drawing styles
 
-The tool supports four visual styles, each with optional room type coloring:
+| `--style` | Looks like |
+|-----------|------------|
+| `professional` *(default)* | Clean architectural drawing with subtle fills |
+| `minimal` | Black and white; rooms separated by shades of grey |
+| `colorful` | Bright and saturated, for slides and posters |
+| `technical` | Outlines only, no fills, like a drafting sheet. Room colouring does not apply |
 
-### Professional (Default)
-Clean architectural style with subtle colors. When `--colored-spaces` is enabled, each room type gets a distinct pastel color.
-
-### Minimal
-Black and white style with grayscale room differentiation when colored mode is enabled.
-
-### Colorful
-Bright, vibrant colors for presentations. Room types use highly saturated colors in colored mode.
-
-### Technical
-Line-only drawings with no fills (architectural drafting style). Room coloring is not applicable.
-
-## Examples
+Every style can be combined with `--colored-spaces` except `technical`.
 
 <details>
-<summary>📸 View example outputs</summary>
+<summary>📸 Example outputs</summary>
 
-### Professional
-Default output with uniform space coloring
+**Professional** — default, uniform space colouring
 ![Professional floor plan example](assets/professional.png)
 
-### Professional Style with Colored Room Types
-With `--colored-spaces` flag, each room type has a distinct color
-![Colored floor plan example](assets/professional_colored.png)
+**Professional with `--colored-spaces`** — each room type in its own colour
+![Coloured floor plan example](assets/professional_colored.png)
 
-### Technical Style (Line drawings)
+**Technical** — line drawing
 ![Technical floor plan example](assets/technical.png)
 
 </details>
 
 ## Troubleshooting
 
-**No floor plans generated?**
-- Ensure your IFC file contains `IfcBuildingStorey` elements
-- Try `--max-elements 100` for testing large files
-- Check that `--formatter image` is specified if you want image outputs
+**`can't open file 'extract_floor_plans.py'` or `ModuleNotFoundError`**
+Use the full path: `python src/ifc2plan/extract_floor_plans.py`, run from the `ifc2plan` folder.
 
-**Room types not colored?**
-- Ensure you use `--colored-spaces` flag
-- Provide a naming conversion CSV with `--naming-conversion`
-- Check that room names in IFC match entries in your CSV (case-insensitive)
+**No images came out**
+Add `--formatter image`. On its own, the tool writes CSV only.
 
-**`can't open file 'extract_floor_plans.py'`, or `ModuleNotFoundError`?**
-- Invoke the script by its path: `python src/ifc2plan/extract_floor_plans.py` — see
-  [Installation](#installation)
+**No floor plans at all**
+The model needs `IfcBuildingStorey` elements — `--overview` will show you whether it has any.
 
-**Memory issues?**
-- Use `--max-elements` to limit processing
-- Process files individually instead of batch
-- A parsed IFC model is roughly 6× its file size in RAM, so a 200 MB file wants ~1.2 GB.
-  `--parallel` holds one copy per worker and sizes the pool against available memory
-  for that reason
+**Rooms aren't coloured**
+You need `--colored-spaces` *and* `--naming-conversion`, and the room names in the model
+have to match rows in your CSV.
 
-**Processing very slow?**
-- Read the `⏱` lines. Time is usually concentrated in a handful of heavily tessellated
-  elements rather than spread across the model — see
-  [When a run is unexpectedly slow](#when-a-run-is-unexpectedly-slow)
-- `--max-faces` skips those elements if you do not need them, at the cost of dropping
-  their geometry
-- `--parallel` opens the model once per worker and processes elements across cores
+**It ran out of memory**
+A model takes roughly six times its file size in memory, so a 200 MB file wants about
+1.2 GB. Do one storey at a time, or use `--max-elements` to cap the work. `--parallel` is
+faster but holds one copy of the model per core, so it needs more memory, not less.
+
+**It's taking forever** — see below.
+
+## If a run is slow
+
+Almost always, a handful of elements are responsible. On one real storey, **4 elements out
+of 669 took 99% of the time** — over half an hour between them.
+
+ifc2plan names them as it goes and lists them at the end of each storey:
+
+```
+   ⏱  4 slow element(s), 309s total:
+        157.8s  IfcCovering #462475 '47_GM_waterslag' (26,011 faces)
+         86.5s  IfcCovering #504259 '47_GM_waterslag' (26,011 faces)
+```
+
+If you don't need those elements, `--max-faces` skips them. On the storey above,
+`--max-faces 12000` cut the drawing step from **162 seconds to 5.6** and left out exactly
+those four elements.
+
+**Read the report before choosing a number.** Face count only roughly predicts cost: in the
+same model a 10,239-face door converted in 0.66 s while a 15,736-face covering took 23 s.
+Set the limit too low and you lose geometry without saving time. This is why the option is
+off by default — it changes what ends up in your drawing.
+
+<details>
+<summary>Which elements does <code>--max-faces</code> actually count?</summary>
+
+Face counts are read from the model's own representation data, covering tessellated bodies
+(`IfcPolygonalFaceSet`, `IfcTriangulatedFaceSet`), brep solids (`IfcFacetedBrep` and the
+rest of the `IfcManifoldSolidBrep` family), surface models, and mapped items wrapping any
+of those.
+
+Anything else counts as zero and is therefore never skipped — an unfamiliar body type makes
+the flag do less, never more. Swept solids such as `IfcExtrudedAreaSolid` declare no face
+count at all, so they are always converted.
+
+</details>
 
 ## Origin
 
 `ifc2plan` began as a fork of [byildiz/BatchPlan](https://github.com/byildiz/BatchPlan)
-and was renamed after diverging substantially from it. It is a derivative work, MIT
-licensed, and the original copyright is retained — see [LICENSE](LICENSE).
+(MIT licensed) and was renamed after diverging substantially. It is a derivative work and
+the original copyright is retained — see [LICENSE](LICENSE).
+
+<details>
+<summary>What changed since the fork</summary>
 
 - Derived from [`byildiz/BatchPlan@4958a6f`](https://github.com/byildiz/BatchPlan/commit/4958a6f).
   This repository's history was truncated to its own work, so the original commits are
   **not** in this history — they remain in `byildiz/BatchPlan`. The root commit here
   records the derivation.
-- The OpenCASCADE/SWIG geometry pipeline of the original was replaced with a
-  [Trimesh](https://trimsh.org/) + [Shapely](https://shapely.readthedocs.io/) engine
-  (`src/ifc2plan/geometry_engine.py`, `src/ifc2plan/ifc_processor.py`).
+- The OpenCASCADE/SWIG geometry pipeline was replaced with a [Trimesh](https://trimsh.org/)
+  + [Shapely](https://shapely.readthedocs.io/) engine.
 - The original's material/LCA database tooling was removed; this repository is scoped to
   floor plan and geometry extraction.
+- The former repository, `datarefinerylab/BatchPlan`, is archived and read-only.
 
-The former repository, `datarefinerylab/BatchPlan`, is archived and read-only.
+</details>
 
 ---
 
