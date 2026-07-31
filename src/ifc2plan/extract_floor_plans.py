@@ -1,5 +1,6 @@
 import argparse
 import glob
+import sys
 from pathlib import Path
 import pandas as pd
 
@@ -10,7 +11,8 @@ from ifc_processor import (
     space_filter,
     process_storeys,
     process_storeys_space_only,
-    print_ifc_overview
+    print_ifc_overview,
+    StoreySelectionError,
 )
 
 
@@ -41,11 +43,63 @@ def load_naming_conversion(csv_path):
         return {}
 
 
+def print_run_plan(args, ifc_paths, selected_formatters):
+    """
+    Say what this run is about to do, before it does it.
+
+    This replaces a banner that announced three optimisations that are always
+    on and are not options - the most prominent thing on screen carried no
+    information. These lines are all things the user chose and can change.
+    """
+    if len(ifc_paths) == 1:
+        model = Path(ifc_paths[0]).name
+    else:
+        model = f"{len(ifc_paths)} files matching {args.ifc_paths!r}"
+
+    storeys = "all" if args.storey is None else str(args.storey)
+    elements = "IfcSpace only (rooms)" if args.space_only else "all element types"
+    outputs = ", ".join(selected_formatters)
+    if "image" in selected_formatters:
+        outputs += f" ({args.style}"
+        outputs += ", coloured + b&w)" if args.both else (
+            ", coloured)" if args.colored_spaces else ", black & white)")
+
+    print()
+    print(f"  model      {model}")
+    print(f"  storeys    {storeys}")
+    print(f"  elements   {elements}")
+    print(f"  writing    {outputs}")
+    print(f"  cut at     {args.section_offset:g} m above each storey elevation")
+    print(f"  output     {Path(args.output).absolute()}")
+    if args.max_elements:
+        print(f"  note       stopping after {args.max_elements} elements per storey")
+
+
+def print_written_files(written_files, output_root):
+    """List everything the run produced, as paths relative to the output root."""
+    print(f"\n{'─' * 66}")
+
+    if not written_files:
+        print("Finished, but nothing was written.")
+        print("  Check the warnings above: the cutting plane may have missed the")
+        print("  geometry, or the storey selection may have matched empty storeys.")
+        return
+
+    root = output_root.absolute()
+    print(f"Finished - {len(written_files)} file(s) in {root}")
+    for path in written_files:
+        try:
+            display = Path(path).absolute().relative_to(root)
+        except ValueError:
+            display = Path(path)
+        print(f"  {display}")
+
+
 def process_ifc_file(ifc_path, context):
     """Process a single IFC file"""
-    print(f"\n{'=' * 60}")
-    print(f"Processing: {ifc_path}")
-    print(f"{'=' * 60}")
+    print(f"\n{'═' * 66}")
+    print(f"{ifc_path}")
+    print(f"{'═' * 66}")
 
     ifc_path = Path(ifc_path)
     output_dir = Path(context["args"].output) / ifc_path.stem
@@ -57,12 +111,15 @@ def process_ifc_file(ifc_path, context):
 
     try:
         # Choose processing mode
+        # Which mode is running is already stated in the run plan above.
         if context["args"].space_only:
-            print("Mode: Space-only extraction (like notebook)")
             process_storeys_space_only(context)
         else:
-            print("Mode: Full geometry extraction (all elements)")
             process_storeys(context)
+    except StoreySelectionError:
+        # The user asked for storeys that do not exist. That is not a per-file
+        # processing failure to log and move past - the whole run is wrong.
+        raise
     except Exception as e:
         print(f"Error processing {ifc_path}: {e}")
         import traceback
@@ -73,79 +130,103 @@ def main():
     """Main function with modernized argument parsing"""
 
     parser = argparse.ArgumentParser(
-        description="Extract floor plans from IFC files - OPTIMIZED VERSION",
+        description="Extract 2D floor plans (PNG / WKT CSV) from IFC building models.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Examples:
-  # Show file overview without processing geometry
-  python extract_floor_plans.py building.ifc --overview
+Start here:
+  # 1. See what is in the model - storeys, their indices and elevations
+  python src/ifc2plan/extract_floor_plans.py "examples/data/Shependomlaan/IFC Schependomlaan.ifc" --overview
 
-  # Extract only storey 5 (use --overview to see indices)
-  python extract_floor_plans.py building.ifc --storey 5
+  # 2. Cut one storey and look at it
+  python src/ifc2plan/extract_floor_plans.py "examples/data/Shependomlaan/IFC Schependomlaan.ifc" \\
+      -s 1 -f image wkt -o output
 
-  # Extract all elements (walls, spaces, etc.) - default: professional b&w style
-  python extract_floor_plans.py building.ifc --output ./output
+  # 3. Cut the whole building
+  python src/ifc2plan/extract_floor_plans.py "examples/data/Shependomlaan/IFC Schependomlaan.ifc" \\
+      -s all -f image wkt -o output
 
-  # Extract only IfcSpace elements with colored room types
-  python extract_floor_plans.py building.ifc --space-only --naming-conversion names.csv --colored-spaces
+Selecting storeys (-s/--storey):
+  -s 1            one storey, by index from --overview
+  -s 0,2          several
+  -s 1-3          an inclusive range
+  -s begane       any storey whose name contains this text
+  -s all          every storey (the default)
 
-  # Generate both colored and black & white versions for storey 0
-  python extract_floor_plans.py building.ifc --storey 0 --space-only --naming-conversion names.csv --both
+Rooms only, with English room names and colour:
+  python src/ifc2plan/extract_floor_plans.py "examples/data/Shependomlaan/IFC Schependomlaan.ifc" \\
+      --space-only --naming-conversion naming_conversion.csv --colored-spaces -f image
+
+Run this script by its path, as above - it is not installed as a command.
         """
     )
 
-    parser.add_argument("ifc_paths", help="IFC file path or glob pattern")
-    parser.add_argument("--output", default="output", help="Output directory")
-    parser.add_argument("--formatter", nargs='+', default=["wkt"],
-                        choices=["image", "wkt"],
-                        help="Output formatters (space-separated list)")
+    parser.add_argument("ifc_paths", metavar="IFC_PATH",
+                        help="IFC file, or a glob pattern matching several")
 
-    # Processing mode
-    parser.add_argument("--overview", action="store_true",
-                        help="Show IFC file overview (storeys, elements) without processing geometry")
-    parser.add_argument("--storey", type=int, default=None,
-                        help="Process only specific storey by index (0-based). Use --overview to see indices.")
-    parser.add_argument("--section-offset", type=float, default=1.5, metavar="METRES",
-                        help="Height of the cutting plane above each storey's elevation, "
-                             "in metres (default: 1.5, the conventional plan cut height). "
-                             "Storeys whose geometry does not reach this plane fall back "
-                             "to a height that does; the run reports when that happens.")
-    parser.add_argument("--space-only", action="store_true",
-                        help="Extract only IfcSpace elements (matches notebook approach)")
-    parser.add_argument("--naming-conversion", type=str, default=None,
-                        help="CSV file with naming conversion (Dutch->English). Format: original,english")
+    common = parser.add_argument_group(
+        "common options",
+        "The four you normally touch.")
+    common.add_argument("-o", "--output", default="output", metavar="DIR",
+                        help="Where to write results (default: output). Each model "
+                             "gets its own subdirectory.")
+    common.add_argument("-s", "--storey", default=None, metavar="SPEC",
+                        help="Which storeys to cut: an index (1), a list (0,2), a "
+                             "range (1-3), part of a storey name (begane), or 'all'. "
+                             "Default: all. Run --overview to see the choices.")
+    common.add_argument("-f", "--formatter", nargs='+', default=["wkt"],
+                        choices=["image", "wkt"], metavar="{image,wkt}",
+                        help="What to write: 'image' for a PNG plan, 'wkt' for a CSV "
+                             "of geometries, or both (default: wkt)")
+    common.add_argument("--overview", action="store_true",
+                        help="Print the model's storeys and element counts, then exit "
+                             "without cutting anything")
 
-    # Filtering
-    parser.add_argument("--filter", help="Filter expression for IfcOpenShell")
+    what = parser.add_argument_group(
+        "what to extract",
+        "Which elements end up in the plan, and where the cut is taken.")
+    what.add_argument("--space-only", action="store_true",
+                      help="Extract only IfcSpace elements - rooms, no walls")
+    what.add_argument("--section-offset", type=float, default=1.5, metavar="METRES",
+                      help="Height of the cutting plane above each storey's elevation, "
+                           "in metres (default: 1.5, the conventional plan cut height). "
+                           "Storeys whose geometry does not reach this plane fall back "
+                           "to a height that does; the run reports when that happens.")
+    what.add_argument("--naming-conversion", type=str, default=None, metavar="CSV",
+                      help="CSV mapping room names to English. Format: original,english")
+    what.add_argument("--filter", help="Filter expression for IfcOpenShell")
 
-    # Visualization
-    parser.add_argument("--width", type=int, default=2048, help="Image width")
-    parser.add_argument("--height", type=int, default=2048, help="Image height")
-    parser.add_argument("--style", choices=["professional", "minimal", "colorful", "technical"],
-                        default="professional", help="Visual style theme")
-    parser.add_argument("--colored-spaces", action="store_true",
-                        help="Color spaces by room type (default: black & white)")
-    parser.add_argument("--both", action="store_true",
-                        help="Generate both colored and black & white versions")
+    look = parser.add_argument_group(
+        "how the image looks",
+        "Ignored unless -f includes 'image'.")
+    look.add_argument("--style", choices=["professional", "minimal", "colorful", "technical"],
+                      default="professional", help="Visual style theme (default: professional)")
+    look.add_argument("--colored-spaces", action="store_true",
+                      help="Colour rooms by type (default: black & white)")
+    look.add_argument("--both", action="store_true",
+                      help="Write both the coloured and the black & white version")
+    look.add_argument("--width", type=int, default=2048, help="Image width in pixels")
+    look.add_argument("--height", type=int, default=2048, help="Image height in pixels")
 
-    # Performance
-    parser.add_argument("--parallel", action="store_true",
-                        help="Convert element geometry across multiple cores. Each worker "
-                             "holds its own copy of the model, so the pool is sized against "
-                             "available memory as well as core count")
-    parser.add_argument("--max-elements", type=int, default=None,
-                        help="Maximum number of elements to process (for testing large files)")
-    parser.add_argument("--skip-failed", action="store_true",
-                        help="Continue processing even if some elements fail")
-    parser.add_argument("--slow-element-seconds", type=float, default=SLOW_ELEMENT_SECONDS,
-                        help=f"Report any element taking longer than this to convert "
-                             f"(default: {SLOW_ELEMENT_SECONDS})")
-    parser.add_argument("--max-faces", type=int, default=None,
-                        help="Skip elements whose representation declares more faces than this. "
-                             "Off by default: it trades completeness for speed, and a handful of "
-                             "highly tessellated elements can be most of a run's time")
-    parser.add_argument("--tolerance", type=float, default=1e-6,
-                        help="Geometric tolerance")
+    speed = parser.add_argument_group(
+        "speed and troubleshooting",
+        "Reach for these on large models or when a run misbehaves.")
+    speed.add_argument("--parallel", action="store_true",
+                       help="Convert element geometry across multiple cores. Each worker "
+                            "holds its own copy of the model, so the pool is sized against "
+                            "available memory as well as core count")
+    speed.add_argument("--max-elements", type=int, default=None,
+                       help="Stop after this many elements per storey (for trying things out)")
+    speed.add_argument("--skip-failed", action="store_true",
+                       help="Continue processing even if some elements fail")
+    speed.add_argument("--slow-element-seconds", type=float, default=SLOW_ELEMENT_SECONDS,
+                       help=f"Report any element taking longer than this to convert "
+                            f"(default: {SLOW_ELEMENT_SECONDS})")
+    speed.add_argument("--max-faces", type=int, default=None,
+                       help="Skip elements whose representation declares more faces than this. "
+                            "Off by default: it trades completeness for speed, and a handful of "
+                            "highly tessellated elements can be most of a run's time")
+    speed.add_argument("--tolerance", type=float, default=1e-6,
+                       help="Geometric tolerance")
 
     args = parser.parse_args()
 
@@ -154,12 +235,12 @@ Examples:
         ifc_paths = glob.glob(args.ifc_paths)
         if not ifc_paths:
             print(f"No IFC files found matching: {args.ifc_paths}")
-            return
+            return 1
 
         for ifc_path in ifc_paths:
             print_ifc_overview(ifc_path)
 
-        return  # Exit after showing overview
+        return 0  # Exit after showing overview
 
     # Load naming conversion if provided
     naming_conversion = {}
@@ -179,7 +260,8 @@ Examples:
         "colored_spaces": args.colored_spaces,
         "both": args.both,
         "parallel": args.parallel,  # Opt-in parallel processing
-        "storey_index": args.storey,  # Add storey filter
+        "storey_selection": args.storey,  # index / list / range / name / all
+        "written_files": [],
         "section_offset": args.section_offset,
         "slow_seconds": args.slow_element_seconds,
         "max_faces": args.max_faces,
@@ -197,24 +279,20 @@ Examples:
     ifc_paths = glob.glob(args.ifc_paths)
     if not ifc_paths:
         print(f"No IFC files found matching: {args.ifc_paths}")
-        return
+        return 1
 
-    print(f"\n{'=' * 60}")
-    print(f"PERFORMANCE OPTIMIZATIONS ENABLED:")
-    print(f"  🎯 Storey-filtered processing: ON")
-    print(f"  🚀 Fast geometry extraction: ON")
-    print(f"  💾 Settings caching: ON")
-    if context['storey_index'] is not None:
-        print(f"  📍 Single storey mode: Storey {context['storey_index']}")
-    print(f"{'=' * 60}\n")
+    print_run_plan(args, ifc_paths, selected_formatters)
 
     for ifc_path in ifc_paths:
-        process_ifc_file(ifc_path, context)
+        try:
+            process_ifc_file(ifc_path, context)
+        except StoreySelectionError as exc:
+            print(f"\n❌ {exc}")
+            return 2
 
-    print(f"\n{'=' * 60}")
-    print("Processing complete!")
-    print(f"Output saved to: {Path(args.output).absolute()}")
+    print_written_files(context["written_files"], Path(args.output))
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main() or 0)
