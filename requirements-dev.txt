@@ -1,0 +1,2 @@
+# Test dependencies (not needed to run the CLI)
+pytest>=7.0
