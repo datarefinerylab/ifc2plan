@@ -1,0 +1,71 @@
+name: tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A new push supersedes the run already in flight for the same branch.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    # The suite runs in ~20s locally. Anything approaching this limit means
+    # something is wedged, not slow - see #13 for how long that can go unnoticed.
+    timeout-minutes: 15
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # Both ends of what the project can actually run on:
+        #
+        #   3.9  - what development happens on, and the last version
+        #          ifcopenshell supports. 0.8.5 dropped it (requires-python
+        #          >=3.10), so this leg resolves to 0.8.4.post1 and is pinned to
+        #          a dependency that no longer gets releases.
+        #   3.13 - a currently supported Python, on the newest ifcopenshell.
+        #
+        # The two legs therefore test *different* ifcopenshell versions. That is
+        # deliberate: it is the only thing that will catch geometry behaviour
+        # diverging between the version developers run and the one everyone else
+        # installs. Python 3.9 is end-of-life, so this matrix is a stopgap until
+        # the project moves.
+        python-version: ["3.9", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Report resolved versions
+        # Which ifcopenshell actually got installed is the first thing worth
+        # knowing when a geometry test fails on one leg and not the other.
+        run: pip list | grep -iE "ifcopenshell|shapely|trimesh|numpy"
+
+      # The KAAN models are client data and are not in the repository, so only
+      # the tests that run against the committed Schependomlaan example can run
+      # here. Everything marked `private` skips itself when the files are absent;
+      # deselecting them explicitly keeps the summary honest about what ran.
+      - name: Run tests
+        run: pytest -m "not private" -v --durations=10
+
+      - name: Geometry engine self-test
+        # Covered by the suite too, but this is the entry point CLAUDE.md and the
+        # README document, so it should not be allowed to rot.
+        working-directory: src/ifc2plan
+        run: python geometry_engine.py
