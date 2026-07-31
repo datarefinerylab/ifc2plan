@@ -24,13 +24,21 @@ from geometry_engine import (
 class FakeItem:
     """Stands in for a representation item without needing an IFC file."""
 
-    def __init__(self, ifc_class, **attrs):
+    def __init__(self, ifc_class, supertypes=(), **attrs):
         self._class = ifc_class
+        # Real ifcopenshell `is_a` walks the inheritance chain; exact string
+        # matching would make a fake IfcFacetedBrep invisible to a branch that
+        # tests for IfcManifoldSolidBrep. Only the arithmetic is tested with
+        # fakes - whether the schema really relates those two names is asserted
+        # against the model file, in TestBrepFaceCount.
+        self._supertypes = set(supertypes)
         for k, v in attrs.items():
             setattr(self, k, v)
 
     def is_a(self, other=None):
-        return self._class if other is None else self._class == other
+        if other is None:
+            return self._class
+        return other == self._class or other in self._supertypes
 
 
 class FakeRepresentation:
@@ -111,6 +119,97 @@ class TestFaceCount:
         el = FakeElement([item])
 
         assert representation_face_count(el) == 0
+
+
+class TestBrepFaceCount:
+    """
+    Brep solids must be counted (#19).
+
+    They were not, and because IfcPolygonalFaceSet and IfcTriangulatedFaceSet do
+    not exist in IFC2X3, that left the counter returning 0 for 3734 of the 3752
+    elements in the example - so --max-faces was inert on the entire schema while
+    the fake-based tests above stayed green. That is the specific gap these tests
+    close, and why the important ones below run against the real file.
+    """
+
+    def _brep(self, faces, ifc_class="IfcFacetedBrep", **extra):
+        shell = FakeItem("IfcClosedShell", CfsFaces=range(faces))
+        return FakeItem(ifc_class, supertypes=["IfcManifoldSolidBrep"],
+                        Outer=shell, **extra)
+
+    def test_faceted_brep_counts_its_outer_shell(self):
+        assert representation_face_count(FakeElement([self._brep(364)])) == 364
+
+    def test_voids_are_added(self):
+        """IfcFacetedBrepWithVoids pays for its inner shells too."""
+        voids = [FakeItem("IfcClosedShell", CfsFaces=range(6)),
+                 FakeItem("IfcClosedShell", CfsFaces=range(8))]
+        item = self._brep(100, ifc_class="IfcFacetedBrepWithVoids", Voids=voids)
+
+        assert representation_face_count(FakeElement([item])) == 114
+
+    def test_brep_without_voids_attribute_is_fine(self):
+        """Only IfcFacetedBrepWithVoids has `Voids`; the others must not need it."""
+        item = self._brep(12, ifc_class="IfcAdvancedBrep")
+        assert not hasattr(item, "Voids")
+
+        assert representation_face_count(FakeElement([item])) == 12
+
+    def test_brep_with_no_outer_shell_does_not_raise(self):
+        item = FakeItem("IfcFacetedBrep", supertypes=["IfcManifoldSolidBrep"], Outer=None)
+
+        assert representation_face_count(FakeElement([item])) == 0
+
+    @pytest.mark.example
+    def test_faceted_brep_really_is_a_manifold_solid_brep(self, example_ifc):
+        """
+        The schema assumption the fakes above encode, checked against real
+        entities rather than against my belief about the schema.
+
+        One branch matches the supertype so it covers the whole brep family. If
+        ifcopenshell did not resolve that name, every test above would still pass
+        and the counter would still return 0 on real files.
+        """
+        breps = example_ifc.by_type("IfcFacetedBrep")
+        assert breps, "the example model is expected to contain brep bodies"
+
+        assert breps[0].is_a("IfcManifoldSolidBrep")
+        assert len(breps[0].Outer.CfsFaces) > 0
+
+    @pytest.mark.example
+    def test_most_elements_have_a_non_zero_count(self, example_ifc):
+        """
+        The regression that matters: this was 18 of 3752 (0.5%).
+
+        A threshold rather than an exact number, so the test survives a different
+        model being swapped in, but far above what the broken counter could reach.
+        """
+        elements = [e for e in example_ifc.by_type("IfcProduct")
+                    if getattr(e, "Representation", None) is not None]
+        counts = [representation_face_count(e) for e in elements]
+        non_zero = sum(1 for c in counts if c > 0)
+
+        assert non_zero > len(elements) // 2, (
+            f"only {non_zero} of {len(elements)} elements have a face count; "
+            "a whole body type is probably going uncounted again"
+        )
+
+    @pytest.mark.example
+    def test_the_ceiling_actually_skips_on_this_model(self, example_ifc):
+        """
+        End to end: --max-faces must be able to skip something on the committed
+        model. Before the fix no threshold could - 12000, the value used to
+        verify #13 against spot-a2, skipped 0 of 3752 here.
+        """
+        stair = example_ifc.by_id(563782)
+        faces = representation_face_count(stair)
+        assert faces > 0, "this stair's body is an IfcFacetedBrep and counted 0 before"
+
+        processor = IFCGeometryProcessor(max_faces=faces - 1)
+
+        assert processor.process_ifc_element(stair, example_ifc) is None
+        assert len(processor.skipped_elements) == 1
+        assert processor.skipped_elements[0][0] == faces
 
 
 class TestSlowElementReporting:
