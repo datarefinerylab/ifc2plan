@@ -10,6 +10,11 @@ For each storey of a model, ifc2plan cuts a horizontal section through the build
 - a **floor plan image** (PNG), in one of four drawing styles, optionally coloured by room type
 - a **table of the shapes** (CSV), one row per element, so you can measure, count, or feed it into other tools
 
+![Floor plan of the ground floor of the bundled example model, with rooms coloured by type](assets/professional_colored.png)
+
+*The ground floor of the example building included in this repository — produced by step 3
+below, unedited.*
+
 ## Install
 
 You need **Python 3.9 or newer**.
@@ -35,18 +40,20 @@ elements each one has, and tells you the storey numbers you'll need.
 python src/ifc2plan/extract_floor_plans.py "examples/data/Shependomlaan/IFC Schependomlaan.ifc" --overview
 ```
 
-**2. Draw one floor plan.**
+**2. Draw one floor plan.** Storey `1` is the ground floor of this building — step 1 told
+you that.
 
 ```bash
 python src/ifc2plan/extract_floor_plans.py "examples/data/Shependomlaan/IFC Schependomlaan.ifc" \
-  --storey 2 --formatter image
+  --storey 1 --formatter image
 ```
 
-**3. Draw it with rooms coloured by type, and get the data too.**
+**3. Draw it with rooms coloured by type, and get the data too.** This is the drawing at
+the top of this page.
 
 ```bash
 python src/ifc2plan/extract_floor_plans.py "examples/data/Shependomlaan/IFC Schependomlaan.ifc" \
-  --storey 2 --formatter image wkt --colored-spaces \
+  --storey 1 --formatter image wkt --colored-spaces \
   --naming-conversion naming_conversion.csv
 ```
 
@@ -89,15 +96,15 @@ model. Running example 3 above gives you:
 ```
 output/
 └── IFC Schependomlaan/
-    ├── 01 eerste verdieping_floor_plan.png   # the drawing
-    └── 01 eerste verdieping_floor_plan.csv   # the data
+    ├── 00 begane grond_floor_plan.png   # the drawing
+    └── 00 begane grond_floor_plan.csv   # the data
 ```
 
 With `--both` you get two drawings per storey instead of one, marked `_colored` and `_bw`:
 
 ```
-    ├── 01 eerste verdieping_floor_plan_colored.png
-    └── 01 eerste verdieping_floor_plan_bw.png
+    ├── 00 begane grond_floor_plan_colored.png
+    └── 00 begane grond_floor_plan_bw.png
 ```
 
 Each row of the CSV is one element, with these columns:
@@ -143,15 +150,20 @@ row still appear in the output — you'll see them under their original name in 
 Every style can be combined with `--colored-spaces` except `technical`.
 
 <details>
-<summary>📸 Example outputs</summary>
+<summary>📸 Compare the styles</summary>
 
-**Professional** — default, uniform space colouring
+All three are the ground floor of the bundled model, so you can reproduce any of them by
+swapping the `--style` and `--colored-spaces` settings.
+
+**Professional** — the default. Rooms share one fill; doors and windows are picked out in
+colour.
 ![Professional floor plan example](assets/professional.png)
 
-**Professional with `--colored-spaces`** — each room type in its own colour
+**Professional with `--colored-spaces`** — each room type gets its own colour and a legend
+entry.
 ![Coloured floor plan example](assets/professional_colored.png)
 
-**Technical** — line drawing
+**Technical** — outlines only, like a drafting sheet.
 ![Technical floor plan example](assets/technical.png)
 
 </details>
