@@ -14,7 +14,7 @@ from tqdm import tqdm
 from multiprocessing import Pool, cpu_count
 from functools import partial
 
-from geometry_engine import IFCGeometryProcessor
+from geometry_engine import IFCGeometryProcessor, SLOW_ELEMENT_SECONDS
 from collections import Counter, defaultdict
 
 
@@ -570,11 +570,11 @@ _worker_model = None
 _worker_processor = None
 
 
-def _init_worker(ifc_path):
+def _init_worker(ifc_path, slow_seconds=SLOW_ELEMENT_SECONDS, max_faces=None):
     """Pool initializer: open the model once per worker process."""
     global _worker_model, _worker_processor
     _worker_model = ifcopenshell.open(ifc_path)
-    _worker_processor = IFCGeometryProcessor()
+    _worker_processor = IFCGeometryProcessor(slow_seconds=slow_seconds, max_faces=max_faces)
 
 
 def _process_element_worker(element_id):
@@ -584,11 +584,23 @@ def _process_element_worker(element_id):
     element, which on a 97 MB model cost 1.9 s of parsing for ~0.03 s of geometry
     - so the parallel path lost to plain sequential processing (2127 s against
     335 s for one storey of spot-a2). Same storey now takes 208 s.
+
+    Returns the element's diagnostics alongside its mesh because the worker runs
+    in another process: the processor's own lists accumulate there and the parent
+    never sees them, so anything needed for the end-of-pass summary has to travel
+    back with the result.
     """
     element = _worker_model.by_id(element_id)
+
+    del _worker_processor.slow_elements[:]
+    del _worker_processor.skipped_elements[:]
+
     mesh = _worker_processor.process_ifc_element(element, _worker_model)
 
-    return element_id, mesh
+    diagnostics = (list(_worker_processor.slow_elements),
+                   list(_worker_processor.skipped_elements))
+
+    return element_id, mesh, diagnostics
 
 
 def _worker_count(ifc_path):
@@ -625,7 +637,8 @@ def _memory_budget_bytes():
     return total // 2
 
 
-def get_elements_and_shapes(model, ifc_path, filter_fn=None, filter_expr=None, max_elements=None, parallel=False):
+def get_elements_and_shapes(model, ifc_path, filter_fn=None, filter_expr=None, max_elements=None,
+                            parallel=False, slow_seconds=SLOW_ELEMENT_SECONDS, max_faces=None):
     """
     Extract elements and their geometries from IFC model with optional parallel processing.
 
@@ -636,6 +649,9 @@ def get_elements_and_shapes(model, ifc_path, filter_fn=None, filter_expr=None, m
         filter_expr: IFC filter expression
         max_elements: Maximum number of elements to process (for testing)
         parallel: Use parallel processing (default: False - sequential is faster for most cases)
+        slow_seconds: Name any element taking longer than this to convert
+        max_faces: Skip elements whose representation declares more faces than
+            this. Off by default - it drops geometry, so it is opt-in only.
 
     Returns:
         Tuple of (elements, meshes)
@@ -664,6 +680,10 @@ def get_elements_and_shapes(model, ifc_path, filter_fn=None, filter_expr=None, m
     failed_count = 0
     skipped_count = 0
 
+    # Diagnostics for #13, gathered from whichever path runs below.
+    slow_elements = []
+    face_skipped = []
+
     if parallel and len(elements) > 10:  # Only use parallel for larger sets
         # Parallel processing
         workers = _worker_count(ifc_path)
@@ -675,7 +695,8 @@ def get_elements_and_shapes(model, ifc_path, filter_fn=None, filter_expr=None, m
         skipped_count = len(elements) - len(element_ids)
 
         # Process in parallel
-        with Pool(workers, initializer=_init_worker, initargs=(str(ifc_path),)) as pool:
+        with Pool(workers, initializer=_init_worker,
+                  initargs=(str(ifc_path), slow_seconds, max_faces)) as pool:
             results = list(tqdm(
                 pool.imap(_process_element_worker, element_ids),
                 total=len(element_ids),
@@ -684,7 +705,10 @@ def get_elements_and_shapes(model, ifc_path, filter_fn=None, filter_expr=None, m
             ))
 
         # Collect results
-        element_id_to_mesh = {el_id: mesh for el_id, mesh in results}
+        element_id_to_mesh = {el_id: mesh for el_id, mesh, _ in results}
+        for _, _, (slow, skipped) in results:
+            slow_elements.extend(slow)
+            face_skipped.extend(skipped)
 
         for element in elements:
             if element.Representation is None:
@@ -697,7 +721,9 @@ def get_elements_and_shapes(model, ifc_path, filter_fn=None, filter_expr=None, m
                 failed_count += 1
     else:
         # Sequential processing (for small sets or when parallel is disabled)
-        processor = IFCGeometryProcessor()
+        processor = IFCGeometryProcessor(slow_seconds=slow_seconds, max_faces=max_faces)
+        slow_elements = processor.slow_elements
+        face_skipped = processor.skipped_elements
 
         progress_bar = tqdm(elements, desc="Converting elements",
                             bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}] {postfix}')
@@ -736,6 +762,23 @@ def get_elements_and_shapes(model, ifc_path, filter_fn=None, filter_expr=None, m
     print(f"   ✅ Valid geometries: {len(valid_elements)} ({pct(len(valid_elements))})")
     print(f"   ❌ Failed conversions: {failed_count} ({pct(failed_count)})")
     print(f"   ⭐️ Skipped (no representation): {skipped_count} ({pct(skipped_count)})")
+
+    if face_skipped:
+        total_faces = sum(faces for faces, _ in face_skipped)
+        print(f"   ⏭  Skipped (over --max-faces): {len(face_skipped)} "
+              f"({total_faces:,} faces not converted)")
+
+    # The point of #13: a storey that takes half an hour should say where the time
+    # went. Four elements out of 669 were 99% of one storey's conversion time and
+    # nothing in the output named them.
+    if slow_elements:
+        slowest = sorted(slow_elements, reverse=True)[:5]
+        share = sum(elapsed for elapsed, _ in slow_elements)
+        print(f"\n   ⏱  {len(slow_elements)} slow element(s), {share:.0f}s total:")
+        for elapsed, description in slowest:
+            print(f"      {elapsed:7.1f}s  {description}")
+        if len(slow_elements) > len(slowest):
+            print(f"      ... and {len(slow_elements) - len(slowest)} more")
 
     return valid_elements, meshes
 
@@ -880,7 +923,9 @@ def process_storeys(context):
                 ifc_path,
                 filter_fn=storey_filter,
                 max_elements=context.get("max_elements"),
-                parallel=context.get("parallel", True)
+                parallel=context.get("parallel", True),
+                slow_seconds=context.get("slow_seconds", SLOW_ELEMENT_SECONDS),
+                max_faces=context.get("max_faces"),
             )
         else:
             # Nothing but spaces on this storey, so the mesh pass has no work to

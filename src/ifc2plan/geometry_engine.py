@@ -1,9 +1,15 @@
+import time
 from abc import ABC, abstractmethod
 from typing import List, Tuple, Optional, Union
 import numpy as np
 from shapely.geometry import Polygon, MultiPolygon
 from shapely.strtree import STRtree
 import trimesh
+
+# An element that takes longer than this to convert gets named in the log.
+# Ordinary elements finish in under 0.2 s and the pathological ones take tens of
+# seconds, so the gap is wide and the exact value does not matter much.
+SLOW_ELEMENT_SECONDS = 5.0
 
 
 class GeometryEngine(ABC):
@@ -394,13 +400,86 @@ class ShapelyTrimeshEngine(GeometryEngine):
         return img_array
 
 
+def representation_face_count(ifc_element) -> int:
+    """Faces declared in an element's representation, before any conversion.
+
+    Deliberately a cheap upper-ish estimate read straight off the entity, not an
+    exact triangle count: it exists so a caller can predict that an element will
+    be expensive *without* paying the create_shape cost that makes it expensive.
+    Item types it does not recognise contribute 0, so an unknown representation
+    can only make an element look cheaper than it is, never dearer - a wrong
+    guess skips nothing.
+    """
+    def count_items(items, depth=0):
+        # Mapped representations can nest; the depth bound is paranoia about a
+        # cyclic MappingSource rather than a case seen in the data.
+        if depth > 4:
+            return 0
+
+        total = 0
+        for item in items:
+            try:
+                if item.is_a("IfcPolygonalFaceSet"):
+                    total += len(item.Faces or ())
+                elif item.is_a("IfcTriangulatedFaceSet"):
+                    total += len(item.CoordIndex or ())
+                elif item.is_a("IfcMappedItem"):
+                    source = item.MappingSource
+                    if source and source.MappedRepresentation:
+                        total += count_items(source.MappedRepresentation.Items, depth + 1)
+                elif item.is_a("IfcFaceBasedSurfaceModel"):
+                    total += sum(len(s.CfsFaces or ()) for s in (item.FbsmFaces or ()))
+                elif item.is_a("IfcShellBasedSurfaceModel"):
+                    total += sum(len(getattr(s, "CfsFaces", ()) or ())
+                                 for s in (item.SbsmBoundary or ()))
+            except (AttributeError, RuntimeError):
+                continue
+        return total
+
+    try:
+        representation = ifc_element.Representation
+        if representation is None:
+            return 0
+        return sum(count_items(rep.Items or ())
+                   for rep in (representation.Representations or ()))
+    except (AttributeError, RuntimeError):
+        return 0
+
+
+def _describe(ifc_element, faces: int) -> str:
+    """Short identifier for log lines: class, id, name, tessellation size."""
+    try:
+        name = (getattr(ifc_element, "Name", None) or "").split(":")[0][:50]
+        return f"{ifc_element.is_a()} #{ifc_element.id()} {name!r} ({faces:,} faces)"
+    except (AttributeError, RuntimeError):
+        return f"element ({faces:,} faces)"
+
+
+def _report(message: str):
+    """Print without tearing a tqdm progress bar."""
+    try:
+        from tqdm import tqdm
+        tqdm.write(message)
+    except Exception:
+        print(message, flush=True)
+
+
 class IFCGeometryProcessor:
     """Processor for IFC geometry using the new engine"""
 
-    def __init__(self, engine: GeometryEngine = None):
+    def __init__(self, engine: GeometryEngine = None,
+                 slow_seconds: float = SLOW_ELEMENT_SECONDS,
+                 max_faces: Optional[int] = None):
         self.engine = engine or ShapelyTrimeshEngine()
         # Cache settings object to avoid recreating for every element
         self._settings = None
+
+        # Diagnostics for #13. A run used to give no sign of which element it was
+        # stuck on: the progress bar simply stopped advancing.
+        self.slow_seconds = slow_seconds
+        self.max_faces = max_faces
+        self.slow_elements = []   # (elapsed, description) over the threshold
+        self.skipped_elements = []  # (faces, description) refused by max_faces
 
     def _get_settings(self):
         """Get or create cached geometry settings"""
@@ -413,6 +492,29 @@ class IFCGeometryProcessor:
 
     def process_ifc_element(self, ifc_element, ifc_file) -> Optional[trimesh.Trimesh]:
         """Convert IFC element to trimesh geometry"""
+        faces = representation_face_count(ifc_element)
+
+        if self.max_faces is not None and faces > self.max_faces:
+            # Opt-in only: this drops geometry, so it is never the default.
+            description = _describe(ifc_element, faces)
+            self.skipped_elements.append((faces, description))
+            _report(f"   ⏭  Skipped over --max-faces {self.max_faces:,}: {description}")
+            return None
+
+        started = time.perf_counter()
+        try:
+            return self._convert(ifc_element, ifc_file)
+        finally:
+            # In a finally block so an element that is both slow *and* failing is
+            # still named. Those are the ones worth knowing about, and
+            # _convert swallows the exception that would otherwise reveal them.
+            elapsed = time.perf_counter() - started
+            if elapsed >= self.slow_seconds:
+                description = _describe(ifc_element, faces)
+                self.slow_elements.append((elapsed, description))
+                _report(f"   ⏱  Slow element: {description} took {elapsed:.1f}s")
+
+    def _convert(self, ifc_element, ifc_file) -> Optional[trimesh.Trimesh]:
         try:
             import ifcopenshell.geom
 

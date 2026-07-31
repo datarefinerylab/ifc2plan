@@ -48,7 +48,7 @@ class TestWorkerOpensModelOnce:
             e.id() for e in ifc_processor._worker_model.by_type("IfcWall")
             if e.Representation is not None
         )
-        returned_id, _ = _process_element_worker(element_id)
+        returned_id, _, _ = _process_element_worker(element_id)
 
         assert returned_id == element_id
         assert opens == [], f"worker reopened the model {len(opens)} time(s)"
@@ -81,10 +81,13 @@ class TestWorkerOpensModelOnce:
             e.id() for e in ifc_processor._worker_model.by_type("IfcWall")
             if e.Representation is not None
         )
-        returned_id, mesh = _process_element_worker(element_id)
+        returned_id, mesh, diagnostics = _process_element_worker(element_id)
 
         assert returned_id == element_id
         assert mesh is not None, "a wall with a representation should produce a mesh"
+
+        slow, face_skipped = diagnostics
+        assert slow == [] and face_skipped == [], "an ordinary wall is neither slow nor oversized"
 
 
 class TestWorkerCount:
