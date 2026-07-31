@@ -166,3 +166,19 @@ cython_debug/
 build
 scratch_pad.ipynb
 output
+
+# Output directories from ad-hoc runs (plain `output` above misses these)
+output-*
+/run-*
+
+# IFC models are ignored by default. The KAAN models are client data and are not
+# redistributable, so nothing should reach a commit by accident. This does not
+# untrack the Schependomlaan example - gitignore has no effect on files git is
+# already tracking - and that file stays committed as the public fixture.
+*.ifc
+*.ifczip
+*.ifcxml
+examples/data/private/
+
+# Obsidian vault config (personal, not part of the project)
+.obsidian/
