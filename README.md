@@ -131,6 +131,14 @@ converts in 0.66 s while a 15,736-face covering takes 23 s, so a limit set too
 low discards geometry without buying time. The flag is off by default for the
 same reason — it changes output.
 
+Face counts are read from the representation itself and cover tessellated bodies
+(`IfcPolygonalFaceSet`, `IfcTriangulatedFaceSet`), brep solids (`IfcFacetedBrep`
+and the rest of the `IfcManifoldSolidBrep` family), surface models, and mapped
+items wrapping any of those. Anything else counts as zero, so an element with an
+unrecognised body type is never skipped — a body type this does not know about
+makes the flag do less, never more. Swept solids such as `IfcExtrudedAreaSolid`
+have no declared face count and so are always converted.
+
 ## Output Structure
 
 ```

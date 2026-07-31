@@ -409,6 +409,14 @@ def representation_face_count(ifc_element) -> int:
     Item types it does not recognise contribute 0, so an unknown representation
     can only make an element look cheaper than it is, never dearer - a wrong
     guess skips nothing.
+
+    That safety rule has a failure mode worth knowing about: a whole schema can
+    land in the hole. IfcPolygonalFaceSet and IfcTriangulatedFaceSet are IFC4
+    entities that do not exist in IFC2X3, so on an IFC2X3 file the two branches
+    below that read tessellations can never fire, and before the brep branch was
+    added this returned 0 for 3734 of the 3752 elements in the Schependomlaan
+    example - making --max-faces silently inert on that whole schema. When adding
+    a body type here, check it against both schemas.
     """
     def count_items(items, depth=0):
         # Mapped representations can nest; the depth bound is paranoia about a
@@ -423,6 +431,16 @@ def representation_face_count(ifc_element) -> int:
                     total += len(item.Faces or ())
                 elif item.is_a("IfcTriangulatedFaceSet"):
                     total += len(item.CoordIndex or ())
+                elif item.is_a("IfcManifoldSolidBrep"):
+                    # The brep family, matched on the supertype so one branch
+                    # covers IfcFacetedBrep (the dominant body type in IFC2X3),
+                    # IfcFacetedBrepWithVoids and IFC4's IfcAdvancedBrep. All
+                    # three carry the outer shell in `Outer`; only the second
+                    # has `Voids`, hence the getattr.
+                    outer = item.Outer
+                    total += len(outer.CfsFaces or ()) if outer else 0
+                    for void in (getattr(item, "Voids", None) or ()):
+                        total += len(void.CfsFaces or ())
                 elif item.is_a("IfcMappedItem"):
                     source = item.MappingSource
                     if source and source.MappedRepresentation:
