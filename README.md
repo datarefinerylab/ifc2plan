@@ -1,6 +1,6 @@
 # ifc2plan
 
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 > Extract geometric data (CSV/WKT) and 2D floor plans from IFC building models
@@ -15,64 +15,67 @@
 ⚡ **Batch processing** for multiple IFC files
 🔧 **Robust geometry engine** using Trimesh + Shapely    
 
-## Quick Start
-
-```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Show file overview (storeys, element counts)
-python extract_floor_plans.py building.ifc --overview
-
-# Extract specific storey only (much faster!)
-python extract_floor_plans.py building.ifc --storey 5
-
-# Extract geometric data as CSV/WKT
-python extract_floor_plans.py building.ifc
-
-# Generate professional floor plan images with colored room types
-python extract_floor_plans.py building.ifc --formatter image wkt --colored-spaces --naming-conversion naming_conversion.csv
-
-# Extract only spaces with room type coloring for one floor
-python extract_floor_plans.py building.ifc --storey 0 --space-only --colored-spaces --naming-conversion naming_conversion.csv
-```
-
 ## Installation
 
-**Requirements:** Python 3.8+
+**Requirements:** Python 3.9+ — this is set by `ifcopenshell`, which no longer publishes
+wheels for 3.8. The test suite runs on 3.9 and 3.13.
 
 ```bash
 git clone https://github.com/datarefinerylab/ifc2plan.git
 cd ifc2plan
+python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
+
+> [!NOTE]
+> The project is not packaged and its modules import each other by bare name
+> (`from geometry_engine import ...`), so **invoke the script by its path**
+> — `python src/ifc2plan/extract_floor_plans.py`. Python puts the script's own directory
+> on `sys.path`, which is what makes those imports resolve. A bare
+> `python extract_floor_plans.py` only works if you have already `cd`'d into
+> `src/ifc2plan/`.
+
+## Quick Start
+
+A model is included, so these run as written on a fresh clone, from the repository root:
+
+```bash
+EXAMPLE="examples/data/Shependomlaan/IFC Schependomlaan.ifc"
+
+# Show file overview: storeys, element counts. Fast - no geometry processing.
+python src/ifc2plan/extract_floor_plans.py "$EXAMPLE" --overview
+
+# Extract one storey as CSV/WKT (much faster than all storeys)
+python src/ifc2plan/extract_floor_plans.py "$EXAMPLE" --storey 2
+
+# Floor plan images with colored room types
+python src/ifc2plan/extract_floor_plans.py "$EXAMPLE" \
+  --storey 2 --formatter image wkt --colored-spaces \
+  --naming-conversion naming_conversion.csv
+```
+
+Output lands in `output/IFC Schependomlaan/`.
 
 ## Usage
 
 ```bash
-# Show file overview first (fast, no geometry processing)
-python extract_floor_plans.py building.ifc --overview
+# Basic usage: all storeys, WKT only, professional black & white style
+python src/ifc2plan/extract_floor_plans.py building.ifc
 
-# Extract only one storey (much faster than all storeys!)
-python extract_floor_plans.py building.ifc --storey 5
-
-# Basic usage (default: professional black & white style)
-python extract_floor_plans.py input.ifc
-
-# Extract only spaces with colored room types from storey 0
-python extract_floor_plans.py building.ifc \
+# Extract only spaces with colored room types from one storey
+python src/ifc2plan/extract_floor_plans.py building.ifc \
   --storey 0 \
   --space-only \
   --colored-spaces \
   --naming-conversion naming_conversion.csv
 
 # Generate both colored and black & white versions
-python extract_floor_plans.py building.ifc \
+python src/ifc2plan/extract_floor_plans.py building.ifc \
   --both \
   --naming-conversion naming_conversion.csv
 
-# Multiple outputs and styling for specific storey
-python extract_floor_plans.py building.ifc \
+# Multiple outputs and styling for a specific storey
+python src/ifc2plan/extract_floor_plans.py building.ifc \
   --storey 2 \
   --output ./plans \
   --formatter image wkt \
@@ -81,7 +84,7 @@ python extract_floor_plans.py building.ifc \
   --width 4096
 
 # Batch process multiple files
-python extract_floor_plans.py "buildings/*.ifc" --output ./all_plans
+python src/ifc2plan/extract_floor_plans.py "buildings/*.ifc" --output ./all_plans
 ```
 
 ### Command Line Options
@@ -174,7 +177,8 @@ balkon,balcony
 
 Then use it with:
 ```bash
-python extract_floor_plans.py building.ifc --colored-spaces --naming-conversion naming_conversion.csv
+python src/ifc2plan/extract_floor_plans.py building.ifc \
+  --colored-spaces --naming-conversion naming_conversion.csv
 ```
 
 ## Visual Styles
@@ -223,18 +227,24 @@ With `--colored-spaces` flag, each room type has a distinct color
 - Provide a naming conversion CSV with `--naming-conversion`
 - Check that room names in IFC match entries in your CSV (case-insensitive)
 
-**AttributeError: 'float' object has no attribute 'lower'?**
-- Remove empty rows from your naming conversion CSV file
-- Ensure all entries in the CSV have both original and translated names
+**`can't open file 'extract_floor_plans.py'`, or `ModuleNotFoundError`?**
+- Invoke the script by its path: `python src/ifc2plan/extract_floor_plans.py` — see
+  [Installation](#installation)
 
 **Memory issues?**
 - Use `--max-elements` to limit processing
 - Process files individually instead of batch
+- A parsed IFC model is roughly 6× its file size in RAM, so a 200 MB file wants ~1.2 GB.
+  `--parallel` holds one copy per worker and sizes the pool against available memory
+  for that reason
 
 **Processing very slow?**
-- Larger files take longer - this is normal
-- Check that your system isn't running other intensive tasks
-- Try with a smaller test file first using `--max-elements 100`
+- Read the `⏱` lines. Time is usually concentrated in a handful of heavily tessellated
+  elements rather than spread across the model — see
+  [When a run is unexpectedly slow](#when-a-run-is-unexpectedly-slow)
+- `--max-faces` skips those elements if you do not need them, at the cost of dropping
+  their geometry
+- `--parallel` opens the model once per worker and processes elements across cores
 
 ## Origin
 
