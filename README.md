@@ -90,6 +90,7 @@ python extract_floor_plans.py "buildings/*.ifc" --output ./all_plans
 |--------|-------------|---------|
 | `--overview` | Show IFC file overview without processing geometry | `False` |
 | `--storey INDEX` | Process only specific storey by index (0-based) | All storeys |
+| `--section-offset` | Cutting plane height above each storey's elevation, in metres | `1.5` |
 | `--output` | Output directory | `output` |
 | `--formatter` | Output format: `image`, `wkt` (space-separated) | `wkt` |
 | `--style` | Visual style: `professional`, `minimal`, `colorful`, `technical` | `professional` |
