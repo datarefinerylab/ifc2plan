@@ -115,9 +115,27 @@ A real door section legitimately contains L-shaped frame profiles and folded she
 channels. Verify correctness instead — every polygon should come from a watertight
 solid, and areas can be checked independently by ray casting.
 
-**Section height (issue #3 — the biggest remaining defect)**
+**Section height — done, see #3**
 
-> Storey `[0]` of the example produces no intersections at all, and 45 of 205 doors never reach their storey's cutting plane. `process_storeys` hard-codes millimetre elevations and never reads the model's `IfcUnitAssignment`. Make the cut height derive from the declared unit plus a documented CLI offset, and report every element that misses the plane rather than dropping it silently.
+The cut height now comes from `IfcUnitAssignment` (via
+`ifcopenshell.util.unit.calculate_unit_scale`) plus `--section-offset`, default 1.5 m,
+replacing the mid-storey midpoint. Elements that do not reach the plane are counted by
+type and printed per storey.
+
+Two things the issue had wrong, both worth remembering as a method note:
+
+- Storey `[0]` was **not** empty in a full run — it produced 93 intersections all along.
+  The empty result came from `--storey 0`, which computed a *different height for the same
+  storey* because the single-storey path leaves one entry in the list and so took the
+  last-storey branch. Never trust a single-storey run as evidence about a full run; that
+  is fixed now, but the general lesson stands.
+- The storey actually producing nothing was `04 dak`, and nobody had noticed. It now
+  yields 158 polygons.
+
+The interesting design problem was that a fixed offset above the storey datum is wrong for
+non-habitable storeys — `-1 fundering` sits *below* its own elevation and `04 dak` below
+elevation + 1.5 m. Hence the fallback: if the plane lies outside a storey's geometry, drop
+to the height crossing the most elements and say so loudly.
 
 **Per-unit output instead of per-floor**
 

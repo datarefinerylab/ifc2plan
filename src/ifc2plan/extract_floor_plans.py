@@ -105,6 +105,11 @@ Examples:
                         help="Show IFC file overview (storeys, elements) without processing geometry")
     parser.add_argument("--storey", type=int, default=None,
                         help="Process only specific storey by index (0-based). Use --overview to see indices.")
+    parser.add_argument("--section-offset", type=float, default=1.5, metavar="METRES",
+                        help="Height of the cutting plane above each storey's elevation, "
+                             "in metres (default: 1.5, the conventional plan cut height). "
+                             "Storeys whose geometry does not reach this plane fall back "
+                             "to a height that does; the run reports when that happens.")
     parser.add_argument("--space-only", action="store_true",
                         help="Extract only IfcSpace elements (matches notebook approach)")
     parser.add_argument("--naming-conversion", type=str, default=None,
@@ -165,7 +170,8 @@ Examples:
         "colored_spaces": args.colored_spaces,
         "both": args.both,
         "parallel": args.parallel,  # Opt-in parallel processing
-        "storey_index": args.storey  # Add storey filter
+        "storey_index": args.storey,  # Add storey filter
+        "section_offset": args.section_offset
     }
 
     # Setup formatters

@@ -1,6 +1,7 @@
 import ifcopenshell
 import ifcopenshell.util.element
 import ifcopenshell.util.shape
+import ifcopenshell.util.unit
 import numpy as np
 import networkx as nx
 from ifcopenshell.util.element import get_decomposition
@@ -523,6 +524,59 @@ def get_elements_and_shapes(model, ifc_path, filter_fn=None, filter_expr=None, m
     return valid_elements, meshes
 
 
+def storey_elevation_metres(storey, unit_scale):
+    """
+    A storey's elevation in metres.
+
+    IfcBuildingStorey.Elevation is in the model's own length unit, but
+    ifcopenshell hands back geometry already converted to metres. Mixing the two
+    is the unit half of issue #3: this model declares MILLI METRE, so dividing by
+    1000 was accidentally right and the bug stayed invisible on it.
+    """
+    elevation = getattr(storey, "Elevation", None)
+    return (elevation or 0.0) * unit_scale
+
+
+def mesh_z_spans(meshes):
+    """(low, high) z-extent of each mesh, skipping any without usable bounds"""
+    spans = []
+    for mesh in meshes:
+        try:
+            bounds = mesh.bounds
+            if bounds is None:
+                continue
+            spans.append((float(bounds[0][2]), float(bounds[1][2])))
+        except Exception:
+            continue
+    return spans
+
+
+def best_covering_height(spans):
+    """
+    The height crossed by the most meshes, or None if there is nothing to cut.
+
+    Used only as a fallback when the requested plane lies outside a storey's
+    geometry entirely. Candidates are the midpoints between consecutive z edges,
+    so the plane lands strictly inside a span rather than exactly on a face,
+    where sectioning is degenerate.
+    """
+    if not spans:
+        return None, 0
+
+    edges = sorted({z for span in spans for z in span})
+    candidates = [(a + b) / 2 for a, b in zip(edges, edges[1:])]
+    if not candidates:
+        return None, 0
+
+    best_height, best_count = None, 0
+    for height in candidates:
+        count = sum(1 for low, high in spans if low <= height <= high)
+        if count > best_count:
+            best_height, best_count = height, count
+
+    return best_height, best_count
+
+
 def process_storeys(context):
     """Process floor plans using IfcBuildingStorey elements - OPTIMIZED with storey filtering."""
 
@@ -531,6 +585,11 @@ def process_storeys(context):
 
     print("Loading building storeys...")
     storeys = list(model.by_type("IfcBuildingStorey"))
+
+    # Metres per model unit. Read from the model rather than assumed: a
+    # metre-based file was previously cut at 1/1000 of the intended height.
+    unit_scale = ifcopenshell.util.unit.calculate_unit_scale(model)
+    section_offset = context.get("section_offset", 1.5)
 
     if not storeys:
         print("⚠️  No building storeys found in IFC file")
@@ -556,14 +615,13 @@ def process_storeys(context):
         s0 = storey
         name = s0.Name or f"Level_{s0.id()}"
 
-        # Calculate section height
-        # Use midpoint between this storey and next, or this storey's elevation if it's the last one
-        if idx < len(storeys) - 1:
-            s1 = storeys[idx + 1]
-            section_height = (s0.Elevation + s1.Elevation) / 2000
-        else:
-            # Last storey - use this storey's elevation + reasonable offset
-            section_height = s0.Elevation / 1000 + 1.5  # 1.5m above floor
+        # Section height: a fixed offset above this storey's own elevation.
+        # The old rule used the midpoint to the storey above, which depended on
+        # the storey list and so gave a different height under --storey N than in
+        # a full run (the single-storey path leaves one entry, taking the
+        # last-storey branch). This depends on nothing but the storey itself.
+        elevation = storey_elevation_metres(s0, unit_scale)
+        section_height = elevation + section_offset
 
         print(f"\n{'=' * 60}")
         print(f"Processing storey: {name} at height {section_height:.2f}m")
@@ -600,12 +658,41 @@ def process_storeys(context):
 
         print(f"Loaded {len(elements)} elements with valid geometry")
 
+        # A storey's geometry is not always where its datum implies. In the
+        # example file '-1 fundering' sits entirely below its own elevation and
+        # '04 dak' entirely below elevation + 1.5 m, so the requested plane misses
+        # the storey completely and it silently produces nothing. Fall back to a
+        # height that actually cuts something, and say so.
+        spans = mesh_z_spans(meshes)
+        if spans:
+            storey_low = min(low for low, _ in spans)
+            storey_high = max(high for _, high in spans)
+            if not (storey_low <= section_height <= storey_high):
+                fallback, crossed = best_covering_height(spans)
+                print(f"  ⚠️  Plane at {section_height:.2f}m is outside this storey's "
+                      f"geometry ({storey_low:.2f}m..{storey_high:.2f}m)")
+                if fallback is None:
+                    print(f"      No usable fallback height; storey will be empty")
+                else:
+                    print(f"      Falling back to {fallback:.2f}m, crossing "
+                          f"{crossed} of {len(spans)} elements")
+                    section_height = fallback
+
         level_polygons = []
+        missed = Counter()
 
         processor.engine.reset_stats()
 
         for element, mesh in zip(elements, meshes):
             room_type = get_room_type(element, naming_conversion=context.get("naming_conversion"))
+
+            # Elements that never reach the plane produce nothing and used to
+            # vanish without trace. Record them by type so a thin output is
+            # attributable rather than mysterious.
+            bounds = getattr(mesh, "bounds", None)
+            if bounds is not None and not (bounds[0][2] <= section_height <= bounds[1][2]):
+                missed[element.is_a()] += 1
+                continue
 
             polygons = processor.engine.intersect_with_plane(
                 mesh,
@@ -620,6 +707,12 @@ def process_storeys(context):
                     poly,
                     room_type
                 ))
+
+        if missed:
+            total_missed = sum(missed.values())
+            breakdown = ", ".join(f"{n} {t}" for t, n in missed.most_common())
+            print(f"  ⚠️  {total_missed} of {len(elements)} element(s) do not reach "
+                  f"the {section_height:.2f}m plane: {breakdown}")
 
         if level_polygons:
             print(f"  Found {len(level_polygons)} intersections")
