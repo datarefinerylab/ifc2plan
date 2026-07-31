@@ -5,8 +5,9 @@ Parameterised over every model present: the committed Schependomlaan example
 always, plus any KAAN model found in examples/data/private. Run with
 `-m "not private"` for the public-only subset CI can reproduce.
 
-Assertions here are invariants and counts, never row order - output ordering is
-not reproducible between runs (issue #9), so a byte-exact comparison would flake.
+Assertions here are mostly invariants and counts rather than row order, which
+kept them meaningful while output ordering was still unstable (#9). Now that it
+is stable, `test_output_is_reproducible` asserts byte-equality directly.
 """
 
 import subprocess
@@ -168,13 +169,14 @@ def test_cli_space_only_writes_expected_columns(example_model, tmp_path, naming_
     assert all(r["geometry"].startswith(("POLYGON", "MULTIPOLYGON")) for r in rows)
 
 
-@pytest.mark.xfail(reason="issue #9: row order is not reproducible between runs",
-                   strict=False)
 def test_output_is_reproducible(example_model, tmp_path, naming_conversion_path):
     """
-    Two runs over the same input should be byte-identical. They are not: element
-    order comes from get_decomposition, which returns a set. Until #9 lands,
-    'diff the output against main' reports differences that are not real.
+    Two runs over the same input are byte-identical.
+
+    They were not, until #9: element order came from `get_decomposition`, which
+    returns a set, so rows moved between runs and "diff the output against main"
+    - the verification this repo relies on - reported differences that were not
+    real. This test is the reason that check can be trusted.
     """
     one, two = tmp_path / "one", tmp_path / "two"
     for out in (one, two):
