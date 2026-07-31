@@ -1,3 +1,5 @@
+import os
+
 import ifcopenshell
 import ifcopenshell.util.element
 import ifcopenshell.util.shape
@@ -560,18 +562,67 @@ def space_representations(space):
         return "unknown"
 
 
-def _process_element_worker(args):
-    """Worker function for parallel processing - processes a single element"""
-    element_id, ifc_path = args
+# Per-process state for the parallel path. Each worker process opens the model
+# once in _init_worker and reuses it for every element it handles; these globals
+# are how the initializer hands it to the worker, since Pool gives no other way
+# to keep state between tasks.
+_worker_model = None
+_worker_processor = None
 
-    # Each worker needs its own IFC model instance
-    model = ifcopenshell.open(ifc_path)
-    element = model.by_id(element_id)
 
-    processor = IFCGeometryProcessor()
-    mesh = processor.process_ifc_element(element, model)
+def _init_worker(ifc_path):
+    """Pool initializer: open the model once per worker process."""
+    global _worker_model, _worker_processor
+    _worker_model = ifcopenshell.open(ifc_path)
+    _worker_processor = IFCGeometryProcessor()
+
+
+def _process_element_worker(element_id):
+    """Worker function for parallel processing - processes a single element.
+
+    Opening the model belongs in _init_worker, not here. It used to happen per
+    element, which on a 97 MB model cost 1.9 s of parsing for ~0.03 s of geometry
+    - so the parallel path lost to plain sequential processing (2127 s against
+    335 s for one storey of spot-a2). Same storey now takes 208 s.
+    """
+    element = _worker_model.by_id(element_id)
+    mesh = _worker_processor.process_ifc_element(element, _worker_model)
 
     return element_id, mesh
+
+
+def _worker_count(ifc_path):
+    """How many workers a model of this size can afford.
+
+    A parsed model is roughly 6x the file on disk (97 MB -> ~600 MB resident) and
+    every worker holds its own copy, so on a large model the core count is not the
+    binding constraint - memory is. Overcommitting here is what turns a slow run
+    into a swapping one.
+    """
+    cores = cpu_count()
+    try:
+        budget = _memory_budget_bytes()
+        footprint = os.path.getsize(ifc_path) * 6
+    except OSError:
+        return cores
+
+    if not budget or footprint <= 0:
+        return cores
+
+    return max(1, min(cores, int(budget // footprint)))
+
+
+def _memory_budget_bytes():
+    """Bytes of RAM the pool may use, or None if it cannot be determined.
+
+    Half of physical memory: the parent process is holding its own copy of the
+    model at the same time, and the OS needs room to not swap.
+    """
+    try:
+        total = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+    except (ValueError, OSError, AttributeError):
+        return None
+    return total // 2
 
 
 def get_elements_and_shapes(model, ifc_path, filter_fn=None, filter_expr=None, max_elements=None, parallel=False):
@@ -615,19 +666,19 @@ def get_elements_and_shapes(model, ifc_path, filter_fn=None, filter_expr=None, m
 
     if parallel and len(elements) > 10:  # Only use parallel for larger sets
         # Parallel processing
-        print(f"⚡ Using parallel processing with {cpu_count()} cores")
+        workers = _worker_count(ifc_path)
+        print(f"⚡ Using parallel processing with {workers} of {cpu_count()} cores")
 
-        # Prepare arguments (element IDs and IFC path)
+        # Prepare arguments (element IDs; the model itself is opened per worker)
         element_ids = [el.id() for el in elements if el.Representation is not None]
-        args_list = [(el_id, str(ifc_path)) for el_id in element_ids]
 
         skipped_count = len(elements) - len(element_ids)
 
         # Process in parallel
-        with Pool(cpu_count()) as pool:
+        with Pool(workers, initializer=_init_worker, initargs=(str(ifc_path),)) as pool:
             results = list(tqdm(
-                pool.imap(_process_element_worker, args_list),
-                total=len(args_list),
+                pool.imap(_process_element_worker, element_ids),
+                total=len(element_ids),
                 desc="Converting elements",
                 bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]'
             ))
