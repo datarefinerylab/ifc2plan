@@ -2,10 +2,12 @@ import ifcopenshell
 import ifcopenshell.util.element
 import ifcopenshell.util.shape
 import ifcopenshell.util.unit
+import ifcopenshell.ifcopenshell_wrapper
 import numpy as np
 import networkx as nx
 from ifcopenshell.util.element import get_decomposition
-from shapely.geometry import Polygon
+from shapely.geometry import Polygon, LineString
+from shapely.ops import polygonize, unary_union
 from tqdm import tqdm
 from multiprocessing import Pool, cpu_count
 from functools import partial
@@ -183,45 +185,21 @@ def space_filter():
 
 def get_room_type_from_space(space, naming_conversion=None):
     """
-    Extract room type from IfcSpace element using Pset_SpaceCommon.Reference.
+    Extract room type from an IfcSpace.
+
+    Delegates to get_room_type so the two cannot drift apart. They had: this one
+    looked only at Pset_SpaceCommon.Reference and returned None without it, which
+    on the example file meant None for all 100 spaces while get_room_type
+    returned a value for all 100.
 
     Args:
         space: IfcSpace element
         naming_conversion: dict mapping original names to English names (case-insensitive)
 
     Returns:
-        str: Room type or None if not found (cleaned according to normalization rules)
+        str: Room type, or None if the element is not an IfcSpace
     """
-    # Only process IfcSpace elements
-    if not space.is_a("IfcSpace"):
-        return None
-
-    naming_conversion = naming_conversion or {}
-
-    # Create case-insensitive lookup dictionary
-    naming_conversion_lower = {k.lower(): v for k, v in naming_conversion.items()}
-
-    try:
-        # Use ifcopenshell utility to get all property sets
-        psets = ifcopenshell.util.element.get_psets(space)
-
-        # Check if Pset_SpaceCommon exists
-        if 'Pset_SpaceCommon' in psets:
-            reference = psets['Pset_SpaceCommon'].get('Reference', '')
-            if reference:
-                # Get first word (matches notebook logic)
-                roomtype = reference.split()[0]
-
-                # Apply naming conversion if provided (case-insensitive)
-                if naming_conversion_lower:
-                    roomtype = naming_conversion_lower.get(roomtype.lower(), roomtype)
-
-                # Apply room type cleaning/normalization
-                return clean_room_type(roomtype)
-    except Exception:
-        pass
-
-    return None
+    return get_room_type(space, naming_conversion=naming_conversion)
 
 
 def get_room_type(element, naming_conversion=None):
@@ -280,6 +258,17 @@ def get_room_type(element, naming_conversion=None):
     except:
         pass
 
+    # 2) IfcSpace.LongName. The docstring has always promised this step but the
+    # code went straight from the pset to ObjectType, so a model that names its
+    # rooms only in LongName - as the Schependomlaan example does, where not one
+    # of the 100 spaces carries Pset_SpaceCommon.Reference - came out entirely as
+    # "Unknown". Matching on the first word is what makes 'slaapkamer 1' and
+    # 'slaapkamer 2' resolve to the single 'slaapkamer' entry in the conversion.
+    if getattr(element, "LongName", None):
+        roomtype = _map(_first_word(str(element.LongName)))
+        if roomtype:
+            return clean_room_type(roomtype)
+
     if hasattr(element, "ObjectType") and element.ObjectType:
         roomtype = _map(_first_word(str(element.ObjectType)))
         # Apply room type cleaning/normalization
@@ -287,6 +276,42 @@ def get_room_type(element, naming_conversion=None):
 
     # Apply cleaning even to "Unknown"
     return clean_room_type("Unknown")
+
+
+def get_room_name_original(element):
+    """
+    The raw room name as it appears in the model, before any mapping.
+
+    Returned alongside the converted room type so the naming conversion is not
+    lossy: 35 of the example file's 100 spaces have no entry in
+    naming_conversion.csv, and without this their original Dutch name would only
+    survive as a "remaining_" prefix. Downstream work can still group on the real
+    name, and it makes the gaps in the conversion table visible.
+
+    Args:
+        element: IFC element (only IfcSpace carries room names)
+
+    Returns:
+        str: raw name, or "" when the element has none
+    """
+    if not element.is_a("IfcSpace"):
+        return ""
+
+    try:
+        psets = ifcopenshell.util.element.get_psets(element)
+        reference = psets.get('Pset_SpaceCommon', {}).get('Reference', '')
+        if reference:
+            return str(reference).strip()
+    except Exception:
+        pass
+
+    if getattr(element, "LongName", None):
+        return str(element.LongName).strip()
+
+    if getattr(element, "ObjectType", None):
+        return str(element.ObjectType).strip()
+
+    return ""
 
 
 def geometry_from_shape_fast(shape):
@@ -400,6 +425,104 @@ def geometry_from_shape_complex(shape, nodes=None):
 
 # Use the fast path by default
 geometry_from_shape = geometry_from_shape_fast
+
+
+def space_geometry_settings():
+    """
+    Geometry settings for reading space outlines.
+
+    dimensionality is the whole of issue #4. It defaults to SURFACES_AND_SOLIDS,
+    which silently excludes curve-only representations - and 94 of the example
+    file's 100 spaces carry nothing but a FootPrint/GeometricCurveSet, so
+    create_shape raised "Failed to process shape" for all of them. Including
+    curves makes all 100 load.
+
+    The settings this replaced probed SEW_SHELLS and USE_BREP_DATA, neither of
+    which exists in ifcopenshell 0.8.x; the surrounding `except AttributeError:
+    pass` meant the block quietly configured almost nothing.
+    """
+    settings = ifcopenshell.geom.settings()
+    settings.set("use-world-coords", True)
+    settings.set("weld-vertices", True)
+    settings.set("dimensionality",
+                 ifcopenshell.ifcopenshell_wrapper.CURVES_SURFACES_AND_SOLIDS)
+    return settings
+
+
+def _polygon_from_edges(shape):
+    """
+    Assemble the outline by following the shape's edges.
+
+    A footprint comes back as a vertex list plus an edge list. Building a polygon
+    straight from the vertex list assumes ifcopenshell returns them in ring order.
+    That happens to hold for every space in the example file - all 94 footprints
+    have strictly sequential edges - but it is not guaranteed, and where it fails
+    it fails silently by producing a self-intersecting shape rather than an error.
+    Following the edges removes the assumption.
+
+    Returns None when the edges do not close into exactly one ring, leaving the
+    caller to fall back on vertex order.
+    """
+    try:
+        verts = ifcopenshell.util.shape.get_vertices(shape.geometry)
+        edges = ifcopenshell.util.shape.get_edges(shape.geometry)
+        if len(verts) < 3 or len(edges) < 3:
+            return None
+
+        lines = [LineString([verts[a][:2], verts[b][:2]]) for a, b in edges]
+        rings = [p for p in polygonize(unary_union(lines))
+                 if p.is_valid and p.area > 1e-6]
+
+        if len(rings) != 1:
+            return None
+        return rings[0]
+    except Exception:
+        return None
+
+
+def space_outline_polygon(space, settings):
+    """
+    The plan outline of a single IfcSpace, or None.
+
+    Used by both the default and the --space-only path so spaces are extracted the
+    same way everywhere. Spaces are never sectioned: a FootPrint curve already is
+    the plan geometry, and the 6 spaces that do have a Body are handled by the
+    same call through geometry_from_shape's graph-based branch.
+
+    Returns:
+        (polygon, reason) - reason is None on success, otherwise a short string
+        naming why nothing came out, so the caller can report it instead of
+        counting it as an anonymous "skipped".
+    """
+    try:
+        shape = ifcopenshell.geom.create_shape(settings, space)
+    except Exception as e:
+        return None, f"create_shape failed: {str(e).splitlines()[0][:80]}"
+
+    polygon = _polygon_from_edges(shape)
+    if polygon is None:
+        polygon = geometry_from_shape(shape)
+
+    if polygon is None:
+        return None, "no polygon could be built from the shape"
+    if not polygon.is_valid:
+        polygon = polygon.buffer(0)
+    if polygon.is_empty or not polygon.is_valid:
+        return None, "polygon invalid after repair"
+    if polygon.area <= 1e-6:
+        return None, f"degenerate area {polygon.area:.2e}"
+
+    return polygon, None
+
+
+def space_representations(space):
+    """Representation identifier/type pairs, for reporting what a space carries"""
+    try:
+        reps = space.Representation.Representations if space.Representation else []
+        return ", ".join(f"{r.RepresentationIdentifier}/{r.RepresentationType}"
+                         for r in reps) or "none"
+    except Exception:
+        return "unknown"
 
 
 def _process_element_worker(args):
@@ -609,6 +732,7 @@ def process_storeys(context):
         print(f"Found {len(storeys)} storeys")
 
     processor = IFCGeometryProcessor(context['engine'])
+    space_settings = space_geometry_settings()
 
     # Process each storey individually (OPTIMIZATION: only load elements for current storey)
     for idx, storey in enumerate(storeys):
@@ -641,8 +765,17 @@ def process_storeys(context):
             print(f"⚠️  No elements found in storey {name}, skipping")
             continue
 
+        # Spaces are not sectioned. A room's FootPrint curve already is its plan
+        # outline, and most spaces have no solid to cut anyway - 94 of the example
+        # file's 100 carry only FootPrint/GeometricCurveSet, so the mesh path
+        # produced nothing for them and the whole storey's rooms came out of the
+        # handful that happened to have a Body. Extracting all of them the same
+        # way is both more complete and more consistent.
+        storey_spaces = [el for el in storey_elements if el.is_a("IfcSpace")]
+
         # Convert to meshes (only for this storey - MAJOR OPTIMIZATION)
-        storey_element_ids = {el.id() for el in storey_elements}
+        storey_element_ids = {el.id() for el in storey_elements
+                              if not el.is_a("IfcSpace")}
 
         # Create a filter that only includes elements from this storey
         def storey_filter(el):
@@ -705,8 +838,31 @@ def process_storeys(context):
                     element.is_a(),
                     element.Name or f"{element.is_a()}_{element.id()}",
                     poly,
-                    room_type
+                    room_type,
+                    get_room_name_original(element)
                 ))
+
+        # Spaces, from their footprint rather than a section
+        space_failures = []
+        for space in storey_spaces:
+            polygon, reason = space_outline_polygon(space, space_settings)
+            if polygon is None:
+                space_failures.append((space, reason))
+                continue
+            level_polygons.append((
+                "IfcSpace",
+                space.Name or f"Space_{space.id()}",
+                polygon,
+                get_room_type(space, naming_conversion=context.get("naming_conversion")),
+                get_room_name_original(space)
+            ))
+
+        if storey_spaces:
+            print(f"  Extracted {len(storey_spaces) - len(space_failures)} of "
+                  f"{len(storey_spaces)} space outline(s)")
+        for space, reason in space_failures:
+            print(f"  ⚠️  No geometry for IfcSpace {space.id()} "
+                  f"{space.Name or '(unnamed)'!r} [{space_representations(space)}]: {reason}")
 
         if missed:
             total_missed = sum(missed.values())
@@ -763,16 +919,7 @@ def process_storeys_space_only(context):
         storeys = [storeys[storey_index]]
 
     # Setup geometry settings ONCE (moved outside loop - OPTIMIZATION)
-    settings = ifcopenshell.geom.settings()
-    settings.set(settings.USE_WORLD_COORDS, True)
-
-    # Try optional settings (skip if not available)
-    for setting_name in ['SEW_SHELLS', 'USE_BREP_DATA', 'WELD_VERTICES']:
-        try:
-            setting = getattr(settings, setting_name)
-            settings.set(setting, True if setting_name != 'USE_BREP_DATA' else False)
-        except AttributeError:
-            pass
+    settings = space_geometry_settings()
 
     for s0 in storeys:
         name = s0.Name or f"Level_{s0.id()}"
@@ -791,38 +938,36 @@ def process_storeys_space_only(context):
             continue
 
         level_polygons = []
-        skipped = 0
+        failures = []
 
+        # Room type no longer decides whether geometry is attempted. It used to:
+        # a space with no room type was skipped before create_shape was called,
+        # and since get_room_type_from_space needed Pset_SpaceCommon.Reference -
+        # which not one space in the example file has - that discarded every
+        # space in the model before geometry was ever tried.
         for space in tqdm(spaces, desc=f"Processing {name}", leave=False):
-            # Extract room type
-            room_type = get_room_type_from_space(space, naming_conversion)
+            polygon, reason = space_outline_polygon(space, settings)
 
-            if room_type is None:
-                skipped += 1
+            if polygon is None:
+                failures.append((space, reason))
                 continue
 
-            try:
-                # Get shape geometry (using cached settings - OPTIMIZATION)
-                shape = ifcopenshell.geom.create_shape(settings, space)
+            level_polygons.append((
+                "IfcSpace",
+                space.Name or f"Space_{space.id()}",
+                polygon,
+                get_room_type_from_space(space, naming_conversion),
+                get_room_name_original(space)
+            ))
 
-                # Extract 2D polygon using OPTIMIZED method (fast path for simple geometries)
-                polygon = geometry_from_shape(shape)
+        print(f"  Extracted {len(level_polygons)} valid space polygons "
+              f"({len(failures)} without geometry)")
 
-                if polygon is not None and polygon.is_valid and polygon.area > 1e-6:
-                    level_polygons.append((
-                        "IfcSpace",
-                        space.Name or f"Space_{space.id()}",
-                        polygon,
-                        room_type
-                    ))
-                else:
-                    skipped += 1
-
-            except Exception:
-                skipped += 1
-                continue
-
-        print(f"  Extracted {len(level_polygons)} valid space polygons ({skipped} skipped)")
+        # Name every space that produced nothing, with what it actually carries.
+        # A bare "skipped" count reads like filtering rather than data loss.
+        for space, reason in failures:
+            print(f"  ⚠️  No geometry for IfcSpace {space.id()} "
+                  f"{space.Name or '(unnamed)'!r} [{space_representations(space)}]: {reason}")
 
         if level_polygons:
             # Run formatters (CSV, images, etc.)

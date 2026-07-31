@@ -137,6 +137,27 @@ non-habitable storeys — `-1 fundering` sits *below* its own elevation and `04 
 elevation + 1.5 m. Hence the fallback: if the plane lies outside a storey's geometry, drop
 to the height crossing the most elements and say so loudly.
 
+**Spaces / room types — done, see #4**
+
+`--space-only` was producing **zero** polygons, not the six the issue reported. Three
+causes, only one of which the issue named:
+
+- It gated on room type *before* geometry, and the gate required
+  `Pset_SpaceCommon.Reference`, which not one of the 100 spaces has. Every space was
+  dropped before `create_shape` was ever called.
+- Curve-only representations were excluded by ifcopenshell's `dimensionality` setting,
+  which defaults to `SURFACES_AND_SOLIDS`. Setting `CURVES_SURFACES_AND_SOLIDS` loads all
+  100. No manual `IfcPolyline` walking was needed — that was the issue's open question.
+- `get_room_type` never read `LongName` despite its docstring promising it, so every room
+  in every output was `remaining_Unknown`.
+
+Spaces are no longer sectioned in either path: a `FootPrint` curve already *is* the plan
+outline. Now 100/100 model-wide, both paths.
+
+Method note worth keeping: the issue's headline number was wrong because it was measured
+from `create_shape` directly rather than from running the path. **Measure the thing you
+are actually claiming about.**
+
 **Per-unit output instead of per-floor**
 
 > New feature: output grouped per dwelling unit rather than per storey. Before proposing an implementation, tell me how unit membership could be determined from IFC in this file — IfcZone, IfcGroup, spatial containment, space naming? Show me what's actually present in the example model. Then propose the CLI surface.
