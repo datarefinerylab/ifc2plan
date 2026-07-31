@@ -68,7 +68,34 @@ Dependencies are in `requirements.txt` (ifcopenshell, shapely, trimesh, numpy, p
 
 Useful priors when debugging — verify before acting on any of them:
 
-- **Section height is the biggest remaining defect** (issue #3). Storey `[0]` (`-1 fundering`, cut at 0.50 m) returns **no intersections at all** — a whole floor missing from the output — and 45 of 205 doors never reach their storey's plane. **Unit handling in `process_storeys`** (`ifc_processor.py:559-566`): intermediate storeys use `(s0.Elevation + s1.Elevation) / 2000` while the last storey uses `s0.Elevation / 1000 + 1.5`. Both hard-code millimetre elevations; the model's `IfcUnitAssignment` is never read.
+- **Section height is the biggest remaining defect** (issue #3). `process_storeys`
+  (`ifc_processor.py:559-566`) uses `(s0.Elevation + s1.Elevation) / 2000` for
+  intermediate storeys and `s0.Elevation / 1000 + 1.5` for the last one. Three separate
+  problems:
+  - **`--storey N` and a full run disagree on the height of the same storey.** The
+    single-storey path replaces the list (`storeys = [storeys[storey_index]]`, line 548),
+    so `idx == 0` and `len(storeys) == 1` always take the *last-storey* branch. Storey
+    `[0]` is cut at −0.50 m in a full run but +0.50 m under `--storey 0`. A single-storey
+    run therefore cannot be used to verify full-run behaviour, and a "storey 0 is empty"
+    report from `--storey 0` is not evidence of anything.
+  - **The declared unit is never read.** Both branches hard-code millimetres. This model
+    declares `MILLI METRE` so `/1000` is accidentally right. Note the asymmetry that makes
+    it confusing: `IfcBuildingStorey.Elevation` is in raw **model units** (6000), while
+    ifcopenshell hands back geometry already converted to **metres** (5.91).
+    `ifcopenshell.util.unit.calculate_unit_scale(model)` returns 0.001 here and is the
+    conversion to use.
+  - **A fixed offset above the storey datum does not suit non-habitable storeys.** Their
+    geometry is not where the datum implies: `-1 fundering` sits at z −1.700…−0.090 m
+    (*below* its own −1.0 m elevation), and `04 dak` at 11.620…13.113 m against a 12.0 m
+    elevation. A 1.5 m offset puts the plane above every roof element — which is why
+    `04 dak` produces **no intersections at all** today — and would put storey 0 at
+    +0.50 m, losing the 93 intersections a full run currently finds. Any offset rule needs
+    a documented fallback for planes that fall outside a storey's actual geometry.
+- **Counters on the geometry engine are per element, not per solid.** `intersect_with_plane`
+  sections each solid separately, so anything counted inside `_closed_rings` counts solids.
+  `elements_affected` is bumped once per element by `intersect_with_plane` itself for this
+  reason; `open_fragments` / `unusable_rings` are genuine per-solid totals. Keep that split
+  if you add a counter, and it is a usable before/after metric for element loss.
 - **Don't build a mesh with `trimesh.Trimesh(verts, faces)` and default processing.** Trimesh welds vertices that share a position, and in an IFC element those are the corners where separate solids touch (door leaf against frame). Welding fuses them into one torn, non-manifold surface — door 670101 went from 20 watertight solids and 0 broken faces to 68 fragments and 234 broken faces. `process=False` plus sectioning each solid separately is why door/window geometry is now correct; both are load-bearing, and `process=False` alone changes nothing because trimesh welds again when building a section path.
 - `process_ifc_element` swallows all exceptions and returns `None`, so elements silently vanish from output.
 - Output is organised per storey only; there is no per-unit/per-dwelling grouping.
