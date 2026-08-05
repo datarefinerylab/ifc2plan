@@ -180,5 +180,11 @@ output-*
 *.ifcxml
 examples/data/private/
 
+# Open-access models fetched by examples/fetch_open_models.py. Redistributable
+# (see docs/test-models.md), so any of them may be committed deliberately with
+# `git add -f` once the repo-weight question in #21 is settled - but they are not
+# committed by default, because a clone should not pay for them unasked.
+examples/data/open/
+
 # Obsidian vault config (personal, not part of the project)
 .obsidian/
