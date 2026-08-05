@@ -1,13 +1,15 @@
 """
-Coverage the committed example cannot provide.
+Coverage the Schependomlaan example cannot provide.
 
-Schependomlaan is IFC2X3 and declares millimetres, so two things are untestable
-on it: the IFC4 tessellation entities, and any unit scale other than 0.001. The
-models fetched by `python examples/fetch_open_models.py` cover both - see
-docs/test-models.md for what they are and what their licences permit.
+That model is IFC2X3 and declares millimetres, so two things are untestable on
+it: the IFC4 tessellation entities, and any unit scale other than 0.001. The
+open-access models in examples/data/open cover both - see docs/test-models.md for
+what they are and what their licences permit.
 
-Everything here skips when nothing has been fetched. That is deliberate: CI and a
-fresh clone must stay green without them.
+Those models are committed, so this file runs in CI rather than skipping there.
+test_all_open_models_are_present is what keeps that true: if the files stop
+reaching a checkout, every test below would quietly reduce to a skip and CI would
+stay green while testing nothing, so absence is a failure here.
 """
 
 import ifcopenshell
@@ -17,7 +19,45 @@ import pytest
 from geometry_engine import representation_face_count
 from ifc_processor import space_outline_polygon, space_geometry_settings, storey_elevation_metres
 
-from conftest import _open_models
+from conftest import OPEN_DIR, _open_models
+
+# Committed, so this is a fixed list rather than a discovery. Keep it in step with
+# MODELS in examples/fetch_open_models.py.
+EXPECTED_OPEN_MODELS = {
+    "AC20-FZK-Haus.ifc",
+    "AC20-Institute-Var-2.ifc",
+    "AC-20-Smiley-West-10-Bldg.ifc",
+    "PCERT-Building-Architecture-IFC4.ifc",
+    "PCERT-Building-Architecture-IFC4X3.ifc",
+}
+
+
+def test_all_open_models_are_present():
+    """
+    The models are committed. A missing one means a broken checkout or a
+    .gitignore change that re-excluded them - and it would show up as skips, not
+    failures, everywhere else in this file.
+    """
+    present = {p.name for p in _open_models()}
+    missing = EXPECTED_OPEN_MODELS - present
+    assert not missing, (
+        f"missing from {OPEN_DIR}: {sorted(missing)}. "
+        "These are committed; restore them with `git checkout examples/data/open` "
+        "or `python examples/fetch_open_models.py`."
+    )
+
+
+def test_no_undocumented_open_models():
+    """
+    Anything added here needs its licence recorded before it is tested against,
+    which is the whole point of docs/test-models.md.
+    """
+    extra = {p.name for p in _open_models()} - EXPECTED_OPEN_MODELS
+    assert not extra, (
+        f"undocumented model(s) in {OPEN_DIR}: {sorted(extra)}. "
+        "Record the source and licence in docs/test-models.md and add it to "
+        "examples/fetch_open_models.py before it is used as a fixture."
+    )
 
 
 def test_open_model_is_ifc4_or_newer(open_model_path):
@@ -71,8 +111,9 @@ def test_open_model_spaces_produce_valid_outlines(open_model_path):
 
 def _fetched():
     models = _open_models()
-    if not models:
-        pytest.skip("no open-access models fetched: python examples/fetch_open_models.py")
+    assert models, (
+        f"no open-access models in {OPEN_DIR}; see test_all_open_models_are_present"
+    )
     return models
 
 

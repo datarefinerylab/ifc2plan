@@ -5,15 +5,19 @@ check rather than the search. This is the result of that check: five models from
 sources, with terms verified at the source, plus the sources that were looked at and
 rejected.
 
-Fetch them with:
+They live in `examples/data/open/` and are **committed** — 19 MB, on top of the 47 MB
+Schependomlaan. `git clone && pytest` covers IFC4, IFC4X3 and metre-declared models with
+no fetch step and no network, which is the property #21 wanted to protect. They are the
+deliberate exception to the `*.ifc` rule in `.gitignore`.
+
+`examples/fetch_open_models.py` is not needed to use them. It records where each file
+came from and its SHA-256, so they can be re-derived and audited rather than being five
+binaries of unexplained origin:
 
 ```bash
-python examples/fetch_open_models.py
+python examples/fetch_open_models.py --verify   # confirm the repo matches the sources
+python examples/fetch_open_models.py --list     # sources and terms
 ```
-
-They land in `examples/data/open/`, which is gitignored. Nothing depends on them —
-`pytest` passes without them, and tests that use them skip when they are absent, the
-same way the private KAAN models do.
 
 ## Why the committed example is not enough
 
@@ -128,40 +132,39 @@ repository-wide licence statement would not settle any individual file's terms a
 Not usable as a pinned fixture source. The FZK models it carries are available directly
 from KIT, on the clearer terms above.
 
-## Keeping them
+## Repo weight, and why committing won
 
-They are fetched, not committed, and `examples/data/open/` is gitignored — which leaves
-issue #21's repo-weight question open rather than answering it by default. To commit one
-after deciding:
+Issue #21 laid out three options: commit, Git LFS, or fetch in CI from a pinned URL.
+Committing was chosen. The 19 MB is real, but the alternatives both erode the property
+that makes this suite trustworthy — that a fresh clone runs the whole thing. LFS adds a
+setup step for everyone who touches the repo, and fetching in CI makes a green build
+depend on ifcwiki.org staying up, so a fixture disappearing would take the suite with it.
 
-```bash
-git add -f examples/data/open/AC20-FZK-Haus.ifc
-```
+The checksums in `examples/fetch_open_models.py` are what remains of the fetch approach:
+they let anyone confirm that the committed files are the published ones, without the
+build depending on those hosts.
 
-`fzk-haus` is the candidate that survives that decision most easily: 2.4 MB, IFC4,
-metres, two storeys, spaces with footprints.
+If the weight ever needs cutting, `institute` is 10.4 MB of the 19 and the one to drop
+first — `fzk-haus` and `smiley-west` between them still give five storeys, 147 spaces,
+metres, and the multi-dwelling case.
 
-Each entry in `examples/fetch_open_models.py` pins a URL and the SHA-256 of the resulting
-`.ifc`. If a host changes a file, the fetch reports the mismatch instead of quietly
-handing back different geometry.
+## In CI
 
-## Wiring them into CI
+`.github/workflows/tests.yml` needs no fetch step: the models are in the checkout, and
+`tests/conftest.py` discovers them, so every matrix leg tests IFC4, IFC4X3 and metres.
 
-Not done here, because it is the same repo-weight decision. `.github/workflows/tests.yml`
-is untouched, so CI still runs exactly what it ran before. Whichever way #21 is settled,
-the test side already works:
+That discovery has a failure mode worth knowing about — if the files ever stopped
+reaching a checkout, the tests over them would turn into *skips*, and CI would stay green
+while testing nothing. `test_all_open_models_are_present` exists to make that a failure
+instead, and `test_no_undocumented_open_models` refuses a model that was dropped in
+without its licence being recorded here.
 
-- **committed** — nothing else to do; the models are simply present and the tests run
-- **fetched in CI** — one step before `pytest`:
+The full suite is **163 passed / 6 skipped** in about 32 seconds locally, up from 134
+passed before these models — roughly 4 seconds more, well inside `timeout-minutes: 15`.
 
-  ```yaml
-  - name: Fetch open-access test models
-    run: python examples/fetch_open_models.py fzk-haus pcert-ifc4
-  ```
+## Adding another one later
 
-  which adds ~2.7 MB and, measured locally, about 4 seconds of test time — comfortably
-  inside `timeout-minutes: 15`. The cost is that a green build then depends on
-  ifcwiki.org and raw.githubusercontent.com being reachable.
-
-Locally the full suite goes from 134 passed / 6 skipped to **161 passed / 6 skipped**
-with all five fetched, in 32 seconds.
+1. Verify the licence *at the source* and record it in this file, quoting the terms.
+2. Add it to `MODELS` in `examples/fetch_open_models.py` with its URL and SHA-256.
+3. Add the filename to `EXPECTED_OPEN_MODELS` in `tests/test_open_models.py`.
+4. Run it end to end, not just `--overview`, before committing it.

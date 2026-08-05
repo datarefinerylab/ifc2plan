@@ -11,9 +11,10 @@ Two things here are load-bearing:
 2. Models are discovered, not hardcoded. The Schependomlaan example is committed
    and always present. The KAAN models are client data, gitignored, and exist
    only on machines that have them - so tests over them must skip cleanly rather
-   than fail, or CI can never be green. The open-access IFC4 models are fetched
-   rather than committed (`python examples/fetch_open_models.py`) and follow the
-   same rule: present, they are tested; absent, nothing fails.
+   than fail, or CI can never be green. The open-access IFC4 models in
+   examples/data/open are committed, so CI does test them - but they are
+   discovered the same way rather than listed, so adding one is a matter of
+   dropping the file in and recording it in examples/fetch_open_models.py.
 """
 
 import sys
@@ -45,8 +46,8 @@ def _private_models():
 
 def _open_models():
     """
-    Open-access IFC4 models, if they have been fetched. See docs/test-models.md
-    for what they are and what each one's licence permits.
+    The committed open-access IFC4 models. See docs/test-models.md for what they
+    are and what each one's licence permits.
     """
     if not OPEN_DIR.is_dir():
         return []
@@ -91,8 +92,8 @@ def model_path(request):
 )
 def open_model_path(request):
     """
-    One fetched open-access model. Empty when none have been fetched, which
-    pytest reports as a skip rather than a failure.
+    One committed open-access model. Empty only if the files have been deleted
+    locally, which test_open_models.py reports as a failure rather than a skip.
     """
     return request.param
 

@@ -180,11 +180,12 @@ output-*
 *.ifcxml
 examples/data/private/
 
-# Open-access models fetched by examples/fetch_open_models.py. Redistributable
-# (see docs/test-models.md), so any of them may be committed deliberately with
-# `git add -f` once the repo-weight question in #21 is settled - but they are not
-# committed by default, because a clone should not pay for them unasked.
-examples/data/open/
+# ...and the open-access IFC4 models are the deliberate exception to the rule
+# above. They are licence-checked and redistributable (docs/test-models.md), and
+# they are committed so that `git clone && pytest` covers IFC4, IFC4X3 and
+# metre-declared models with no fetch step and no network. The negation has to
+# come after the `*.ifc` line to take effect.
+!examples/data/open/*.ifc
 
 # Obsidian vault config (personal, not part of the project)
 .obsidian/

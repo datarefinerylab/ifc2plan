@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
 """
-Fetch the open-access IFC models used as extra test fixtures.
+Re-fetch and verify the open-access IFC models in examples/data/open/.
 
-Why this exists: the only model committed to the repo is Schependomlaan, which is
+**The models are committed.** You do not need to run this to use them - clone the repo
+and they are there. This script exists so they can be re-derived and audited rather than
+being five binaries of unexplained origin: it records where each one came from and the
+SHA-256 of the file that is in the repo, so anyone can confirm that what we ship is what
+the source published.
+
+Why they are here at all: the only other committed model is Schependomlaan, which is
 IFC2X3 and declared in millimetres. Every model this tool is actually run against is
-IFC4, and some are declared in metres. The models below are open-access, licence-checked
-(see docs/test-models.md), and cover schema and unit combinations the committed example
-cannot reach.
+IFC4, and some are declared in metres. These cover schema and unit combinations the
+Schependomlaan example cannot reach. Licences are recorded in docs/test-models.md.
 
-They are fetched rather than committed because they add ~19 MB that not everyone needs.
-Nothing here is required: `pytest` passes without them, and the tests that use them skip
-when they are absent, exactly like the private KAAN models.
+    python examples/fetch_open_models.py --verify   # check what is in the repo
+    python examples/fetch_open_models.py --list     # show sources and terms
+    python examples/fetch_open_models.py --force    # re-download everything
 
-    python examples/fetch_open_models.py            # fetch all
-    python examples/fetch_open_models.py --list     # show what would be fetched
-    python examples/fetch_open_models.py fzk-haus   # fetch one, by key
-
-Files land in examples/data/open/, which is gitignored. Each download is checked against
-a recorded SHA-256, so a file that changed at the source is reported rather than used.
+A plain run fetches only what is missing, so on a normal checkout it does nothing.
 """
 
 import argparse
@@ -118,12 +118,29 @@ def main():
     parser.add_argument("keys", nargs="*", help="Which models to fetch (default: all)")
     parser.add_argument("--list", action="store_true", help="Show the models and exit")
     parser.add_argument("--force", action="store_true", help="Re-download even if present and valid")
+    parser.add_argument("--verify", action="store_true",
+                        help="Check the committed files against their recorded checksums, download nothing")
     args = parser.parse_args()
 
     if args.list:
         for key, spec in MODELS.items():
             print(f"{key:14s} {spec['note']}\n{'':14s} {spec['url']}")
         return 0
+
+    if args.verify:
+        bad = 0
+        for key, spec in MODELS.items():
+            target = DEST / spec["filename"]
+            if not target.exists():
+                print(f"  MISSING {key:14s} {spec['filename']}")
+                bad += 1
+            elif sha256(target) != spec["sha256"]:
+                print(f"  DIFFERS {key:14s} {spec['filename']} does not match its recorded sha256")
+                bad += 1
+            else:
+                print(f"  ok      {key:14s} {spec['filename']}")
+        print(f"\n{len(MODELS) - bad} of {len(MODELS)} verified.")
+        return 1 if bad else 0
 
     unknown = [k for k in args.keys if k not in MODELS]
     if unknown:
@@ -137,7 +154,8 @@ def main():
     print(f"\n{len(results) - failed} of {len(results)} available."
           + (" Licences and provenance: docs/test-models.md" if not failed else ""))
     if failed:
-        print("Some models could not be fetched. The test suite skips them; it does not fail.")
+        print("Some models could not be fetched. They are committed, so a normal checkout\n"
+              "already has them - this only matters if you deleted them or used --force.")
     return 1 if failed else 0
 
 
