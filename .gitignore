@@ -182,3 +182,8 @@ examples/data/private/
 
 # Obsidian vault config (personal, not part of the project)
 .obsidian/
+
+# Claude Code local state. `.claude/worktrees/` holds full checkouts of this repo,
+# so leaving this untracked is a live footgun: one `git add -A` commits a copy of
+# the repository into itself. Settings in here are per-machine, not project config.
+.claude/
