@@ -10,10 +10,15 @@ For each storey of a model, ifc2plan cuts a horizontal section through the build
 - a **floor plan image** (PNG), in one of four drawing styles, optionally coloured by room type
 - a **table of the shapes** (CSV), one row per element, so you can measure, count, or feed it into other tools
 
-![Floor plan of the ground floor of the bundled example model, with rooms coloured by type](assets/professional_colored.png)
+<p align="center">
+  <a href="assets/professional_colored.png">
+    <img src="assets/professional_colored.png" width="620"
+         alt="Floor plan of the ground floor of the bundled example model, with rooms coloured by type">
+  </a>
+</p>
 
-*The ground floor of the example building included in this repository — produced by step 3
-below, unedited.*
+<p align="center"><em>The ground floor of the example building included in this
+repository — produced by step 3 below, unedited. Click it for full size.</em></p>
 
 ## Install
 

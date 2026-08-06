@@ -421,6 +421,36 @@ class FloorPlanImageFormatter(Formatter):
         except:
             return 'black'
 
+    @staticmethod
+    def _legend_label(elem_type):
+        """The name an IFC entity type is drawn under in the legend."""
+        return elem_type.replace('Ifc', '').replace('StandardCase', '')
+
+    def _element_legend_rows(self, polygon_groups):
+        """
+        The element rows of the legend, keyed by the label the reader sees.
+
+        polygon_groups is keyed by IFC entity type, and several types share a
+        label: IfcWall and IfcWallStandardCase both read "Wall" and are both
+        drawn in the same colour, so one row per type drew that row twice with
+        nothing to tell the copies apart (issue #30). Keying on the label folds
+        them together; the first type to appear supplies the swatch, which is
+        the colour the reader is looking at either way.
+
+        Types with no colour are dropped here rather than while drawing, so the
+        count this returns is the number of rows the legend would actually have.
+        """
+        rows = {}
+        for elem_type in polygon_groups:
+            if elem_type == 'IfcSpace' or elem_type not in self.colors:
+                continue
+            rows.setdefault(
+                self._legend_label(elem_type),
+                (self.colors[elem_type],
+                 self.alphas.get(elem_type, self.alphas['default'])),
+            )
+        return rows
+
     def _create_legend(self, ax, polygon_groups, room_type_groups):
         """Create a professional legend with room types"""
         # Skip legend for technical style (line-only drawings)
@@ -451,10 +481,11 @@ class FloorPlanImageFormatter(Formatter):
                     display_label = room_type.title()
                     legend_labels.append(display_label)
 
-        # Add other element types (non-spaces)
-        present_types = [t for t in polygon_groups.keys() if t != 'IfcSpace']
+        # Add other element types (non-spaces), one row per label rather than one
+        # row per entity type
+        element_rows = self._element_legend_rows(polygon_groups)
 
-        if present_types and len(present_types) <= 12:  # Don't overcrowd legend
+        if element_rows and len(element_rows) <= 12:  # Don't overcrowd legend
             # Add separator if we have both room types and other elements
             if legend_elements:
                 legend_elements.append(patches.Rectangle((0, 0), 1, 1,
@@ -462,21 +493,14 @@ class FloorPlanImageFormatter(Formatter):
                                                          edgecolor='white'))
                 legend_labels.append('')  # Empty label for separator
 
-            for elem_type in present_types:
-                if elem_type in self.colors:
-                    color = self.colors[elem_type]
-                    alpha = self.alphas.get(elem_type, self.alphas['default'])
-
-                    # Create legend patch
-                    patch = patches.Rectangle((0, 0), 1, 1,
-                                              facecolor=color, alpha=alpha,
-                                              edgecolor=self._darken_color(color),
-                                              linewidth=1)
-                    legend_elements.append(patch)
-
-                    # Clean up label
-                    clean_label = elem_type.replace('Ifc', '').replace('StandardCase', '')
-                    legend_labels.append(clean_label)
+            for clean_label, (color, alpha) in element_rows.items():
+                # Create legend patch
+                patch = patches.Rectangle((0, 0), 1, 1,
+                                          facecolor=color, alpha=alpha,
+                                          edgecolor=self._darken_color(color),
+                                          linewidth=1)
+                legend_elements.append(patch)
+                legend_labels.append(clean_label)
 
         if legend_elements:
             # Determine legend title based on content
