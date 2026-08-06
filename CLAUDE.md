@@ -96,13 +96,18 @@ Geometry engine self-test: `python src/ifc2plan/geometry_engine.py`. (CI runs it
 
 ## Environment
 
-Dependencies are in `requirements.txt` (ifcopenshell, shapely, trimesh, numpy, pillow, matplotlib, pandas, tqdm, networkx, scipy). **No virtualenv is committed and the system `python3` (3.9.6) does not have them installed.** Before running anything, check for an active env; if there is none, create `.venv` and install from `requirements.txt` — ask first, don't silently install into system Python.
+Dependencies are in `requirements.txt` (ifcopenshell, shapely, trimesh, numpy, pillow, matplotlib, pandas, tqdm, networkx, scipy). **No virtualenv is committed and the system `python3` (3.9.6) does not have them installed.** Before running anything, check for an active env; if there is none, create `.venv` and install from `requirements.txt` — go ahead and do it, no need to ask. Never install into system Python: 3.9.6 is the floor CI still supports, and polluting it is how the "works on my machine" gap starts.
 
 ## Working Agreements
 
 - **Verify on real data.** `pytest` covers the IFC path now and is the first gate — but it is not the last one. Geometry can pass every assertion and still be visibly wrong, so a change is not "done" until it has also been run against the Schependomlaan example and the resulting geometry/image inspected.
 - **Never commit** `output/`, generated PNG/CSV, or new large IFC files.
-- **Don't push or open PRs without being asked.** `origin` is a shared lab repo. When you are asked, branch — never commit straight to `main`.
+- **Land finished work as a PR — no need to ask first.** Branch, push, open the PR;
+  that is what "done" looks like here, and a local branch is not something anyone
+  can review. `origin` is a shared lab repo, so the PR is the point: it is where a
+  change becomes visible to someone other than its author.
+  **Never commit straight to `main`, force-push, or merge** — merging stays a
+  human click, and that one is not negotiable per-session.
 - No upstream to keep compatible with — the fork was detached and upstream was dormant.
   History is still worth keeping clean, but for our own sake, not for merge-back.
 - When touching `naming_conversion.csv`: it has a blank-original row mapping to `not defined`; `load_naming_conversion` reads it with pandas, so blank/NaN cells have caused `AttributeError: 'float' object has no attribute 'lower'` before.
