@@ -1,18 +1,29 @@
 """
 The legend, which is the part of the image a reader parses rather than looks at.
 
-Issue #30: polygon_groups is keyed by IFC entity type, and several types share a
-rendered label. IfcWall and IfcWallStandardCase both read "Wall" in the same
-colour, so a plan containing both drew two identical rows - and the example model
-contains both (652 and 282), so the duplicate was baked into the README image.
+Two defects, both of which shipped in the README's own illustration:
 
-These test _element_legend_rows rather than the drawn PNG: the rule being checked
-is which rows exist, not how matplotlib lays them out.
+- Issue #30: polygon_groups is keyed by IFC entity type, and several types share
+  a rendered label. IfcWall and IfcWallStandardCase both read "Wall" in the same
+  colour, so a plan containing both drew two identical rows. The example model
+  contains both (652 and 282).
+- The separator between the room types and the elements drew a white swatch with
+  no label, which reads as an entry whose colour failed to render.
+
+Neither is checked by comparing PNGs. What matters is which rows exist and in
+what order, so the row-content tests call _element_legend_rows directly, and the
+separator tests build a real matplotlib legend and read its labels back - the
+separator only exists as part of the assembly, so testing the patch alone would
+not show where it lands or whether it appears at all.
 """
 
-import pytest
+import matplotlib
+matplotlib.use("Agg")  # noqa: E402  - before pyplot, these tests draw nothing
 
-from formatters import FloorPlanImageFormatter
+import matplotlib.pyplot as plt  # noqa: E402
+import pytest  # noqa: E402
+
+from formatters import FloorPlanImageFormatter  # noqa: E402
 
 STYLES_WITH_LEGEND = ["professional", "minimal", "colorful"]
 
@@ -24,6 +35,17 @@ def formatter(style):
 def groups(*types):
     """A polygon_groups stand-in. Only its keys reach the legend."""
     return {t: [] for t in types}
+
+
+def legend_rows(style, polygon_groups, room_type_groups=None):
+    """The labels of a built legend, in the order they are drawn."""
+    fig, ax = plt.subplots()
+    try:
+        formatter(style)._create_legend(ax, polygon_groups, room_type_groups or {})
+        legend = ax.get_legend()
+        return [] if legend is None else [t.get_text() for t in legend.get_texts()]
+    finally:
+        plt.close(fig)
 
 
 @pytest.mark.parametrize("style", STYLES_WITH_LEGEND)
@@ -79,6 +101,40 @@ def test_row_keeps_the_colour_and_alpha_of_its_type():
     (color, alpha), = f._element_legend_rows(groups("IfcDoor")).values()
     assert color == f.colors["IfcDoor"]
     assert alpha == f.alphas["IfcDoor"]
+
+
+# ── the blank row between the two halves of the legend ───────────────────────
+
+def test_separator_draws_nothing():
+    """
+    The gap between room types and elements is a handle with an empty label,
+    which is the only way to space two groups apart in one matplotlib legend.
+    It used to be a *white* rectangle, which on the legend's frame reads as a
+    row whose swatch failed to render rather than as a gap.
+    """
+    patch = FloorPlanImageFormatter._legend_gap_patch()
+    assert patch.get_facecolor()[3] == 0, "separator swatch is painted"
+    assert patch.get_edgecolor()[3] == 0, "separator swatch is outlined"
+
+
+def test_one_blank_row_and_it_is_between_the_sections():
+    """Room types are sorted; element rows keep the order they were drawn in."""
+    rows = legend_rows("professional",
+                       groups("IfcSpace", "IfcWall", "IfcDoor"),
+                       {"corridor": [], "bedroom": []})
+    assert rows == ["Bedroom", "Corridor", "", "Wall", "Door"]
+
+
+def test_no_blank_row_without_room_types():
+    """Nothing to separate, so the legend must not open with an empty row."""
+    rows = legend_rows("professional", groups("IfcWall", "IfcDoor"))
+    assert rows == ["Wall", "Door"]
+    assert "" not in rows
+
+
+def test_no_blank_row_without_elements():
+    rows = legend_rows("professional", groups("IfcSpace"), {"bedroom": []})
+    assert rows == ["Bedroom"]
 
 
 @pytest.mark.example

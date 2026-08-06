@@ -422,6 +422,19 @@ class FloorPlanImageFormatter(Formatter):
             return 'black'
 
     @staticmethod
+    def _legend_gap_patch():
+        """
+        The blank row that separates the room types from the elements.
+
+        It has to be a handle with an empty label, because that is the only way
+        to put a gap between two groups of a matplotlib legend. It must not draw
+        anything, though: a white swatch on the legend's off-white frame reads as
+        an entry whose colour swatch failed to render, which is what it looked
+        like before - a legend row with no name.
+        """
+        return patches.Rectangle((0, 0), 1, 1, facecolor='none', edgecolor='none')
+
+    @staticmethod
     def _legend_label(elem_type):
         """The name an IFC entity type is drawn under in the legend."""
         return elem_type.replace('Ifc', '').replace('StandardCase', '')
@@ -488,9 +501,7 @@ class FloorPlanImageFormatter(Formatter):
         if element_rows and len(element_rows) <= 12:  # Don't overcrowd legend
             # Add separator if we have both room types and other elements
             if legend_elements:
-                legend_elements.append(patches.Rectangle((0, 0), 1, 1,
-                                                         facecolor='white',
-                                                         edgecolor='white'))
+                legend_elements.append(self._legend_gap_patch())
                 legend_labels.append('')  # Empty label for separator
 
             for clean_label, (color, alpha) in element_rows.items():
