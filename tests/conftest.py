@@ -11,7 +11,10 @@ Two things here are load-bearing:
 2. Models are discovered, not hardcoded. The Schependomlaan example is committed
    and always present. The KAAN models are client data, gitignored, and exist
    only on machines that have them - so tests over them must skip cleanly rather
-   than fail, or CI can never be green.
+   than fail, or CI can never be green. The open-access IFC4 models in
+   examples/data/open are committed, so CI does test them - but they are
+   discovered the same way rather than listed, so adding one is a matter of
+   dropping the file in and recording it in examples/fetch_open_models.py.
 """
 
 import sys
@@ -28,6 +31,7 @@ if str(SRC) not in sys.path:
 
 EXAMPLE_MODEL = REPO_ROOT / "examples" / "data" / "Shependomlaan" / "IFC Schependomlaan.ifc"
 PRIVATE_DIR = REPO_ROOT / "examples" / "data" / "private"
+OPEN_DIR = REPO_ROOT / "examples" / "data" / "open"
 
 # Models large enough that a full run is not something you want on every commit.
 # Sizes are the KAAN set as of writing; the threshold is what matters, not the list.
@@ -38,6 +42,16 @@ def _private_models():
     if not PRIVATE_DIR.is_dir():
         return []
     return sorted(PRIVATE_DIR.glob("*.ifc"))
+
+
+def _open_models():
+    """
+    The committed open-access IFC4 models. See docs/test-models.md for what they
+    are and what each one's licence permits.
+    """
+    if not OPEN_DIR.is_dir():
+        return []
+    return sorted(OPEN_DIR.glob("*.ifc"))
 
 
 def _mark_for(path: Path):
@@ -51,11 +65,13 @@ def _model_params():
     """
     Every model available on this machine, as pytest params.
 
-    The example is always included. Private models are added only if present;
-    when the directory is empty the parametrisation still yields the example, so
-    the suite is meaningful on a fresh clone and on CI.
+    The example is always included. Open-access and private models are added only
+    if present; when neither is there the parametrisation still yields the
+    example, so the suite is meaningful on a fresh clone and on CI.
     """
     params = [pytest.param(EXAMPLE_MODEL, id="schependomlaan", marks=[pytest.mark.example])]
+    for path in _open_models():
+        params.append(pytest.param(path, id=path.stem, marks=[pytest.mark.open_model]))
     for path in _private_models():
         params.append(pytest.param(path, id=path.stem, marks=_mark_for(path)))
     return params
@@ -68,6 +84,18 @@ def model_path(request):
     if not path.exists():
         pytest.skip(f"model not available: {path.name}")
     return path
+
+
+@pytest.fixture(
+    scope="session",
+    params=[pytest.param(p, id=p.stem, marks=[pytest.mark.open_model]) for p in _open_models()],
+)
+def open_model_path(request):
+    """
+    One committed open-access model. Empty only if the files have been deleted
+    locally, which test_open_models.py reports as a failure rather than a skip.
+    """
+    return request.param
 
 
 @pytest.fixture(scope="session")
@@ -110,5 +138,7 @@ def opened_model(model_path):
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "example: runs against the committed public model")
+    config.addinivalue_line(
+        "markers", "open_model: needs the fetched open-access models (auto-skips when absent)")
     config.addinivalue_line("markers", "private: needs the gitignored KAAN models")
     config.addinivalue_line("markers", "slow: full run over a large model")
