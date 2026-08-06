@@ -1,13 +1,20 @@
 """
 The legend, which is the part of the image a reader parses rather than looks at.
 
-Issue #30: polygon_groups is keyed by IFC entity type, and several types share a
-rendered label. IfcWall and IfcWallStandardCase both read "Wall" in the same
-colour, so a plan containing both drew two identical rows - and the example model
-contains both (652 and 282), so the duplicate was baked into the README image.
+Two defects, both of which shipped in the README's own illustration:
 
-These test _element_legend_rows rather than the drawn PNG: the rule being checked
-is which rows exist, not how matplotlib lays them out.
+- Issue #30: polygon_groups is keyed by IFC entity type, and several types share
+  a rendered label. IfcWall and IfcWallStandardCase both read "Wall" in the same
+  colour, so a plan containing both drew two identical rows. The example model
+  contains both (652 and 282).
+- The separator between the room types and the elements drew a white swatch with
+  no label, which reads as an entry whose colour failed to render.
+
+Neither is checked by comparing PNGs. What matters is which rows exist and in
+what order, so the row-content tests call _element_legend_rows directly, and the
+separator tests build a real matplotlib legend and read its labels back - the
+separator only exists as part of the assembly, so testing the patch alone would
+not show where it lands or whether it appears at all.
 """
 
 import matplotlib
