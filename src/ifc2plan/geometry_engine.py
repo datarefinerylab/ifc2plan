@@ -1,6 +1,6 @@
 import time
 from abc import ABC, abstractmethod
-from typing import List, Tuple, Optional, Union
+from typing import List, Tuple, Optional
 import numpy as np
 from shapely.geometry import Polygon, MultiPolygon
 from shapely.strtree import STRtree
@@ -22,15 +22,6 @@ class GeometryEngine(ABC):
     @abstractmethod
     def intersect_with_plane(self, geometry: any, plane_origin: Tuple[float, float, float],
                              plane_normal: Tuple[float, float, float]) -> any:
-        pass
-
-    @abstractmethod
-    def get_polygon_area(self, polygon: any) -> float:
-        pass
-
-    @abstractmethod
-    def render_to_image(self, geometries: List[any], width: int, height: int,
-                        colors: Optional[List[str]] = None) -> np.ndarray:
         pass
 
 
@@ -308,97 +299,6 @@ class ShapelyTrimeshEngine(GeometryEngine):
             result.append(poly)
 
         return result
-
-    def get_polygon_area(self, polygon: Polygon) -> float:
-        """Get the area of a polygon"""
-        return polygon.area
-
-    def render_to_image(self, geometries: List[Union[Polygon, MultiPolygon]],
-                        width: int, height: int, colors: Optional[List[str]] = None) -> np.ndarray:
-        """Render geometries to a raster image using matplotlib"""
-        import matplotlib.pyplot as plt
-        import matplotlib.patches as patches
-        from matplotlib.collections import PatchCollection
-        from io import BytesIO
-        import PIL.Image
-
-        # Create figure
-        fig, ax = plt.subplots(1, 1, figsize=(width / 100, height / 100), dpi=100)
-
-        # Calculate bounds
-        all_bounds = []
-        for geom in geometries:
-            if geom and not geom.is_empty:
-                all_bounds.extend(geom.bounds)
-
-        if not all_bounds:
-            # Return blank image if no geometries
-            return np.ones((height, width, 3), dtype=np.uint8) * 255
-
-        min_x = min(all_bounds[::2])
-        min_y = min(all_bounds[1::2])
-        max_x = max(all_bounds[::2])
-        max_y = max(all_bounds[1::2])
-
-        # Add padding
-        padding = max(max_x - min_x, max_y - min_y) * 0.1
-        ax.set_xlim(min_x - padding, max_x + padding)
-        ax.set_ylim(min_y - padding, max_y + padding)
-
-        # Render each geometry
-        for i, geom in enumerate(geometries):
-            if geom is None or geom.is_empty:
-                continue
-
-            color = colors[i] if colors and i < len(colors) else 'blue'
-
-            if isinstance(geom, Polygon):
-                patch = patches.Polygon(list(geom.exterior.coords),
-                                        facecolor=color, alpha=0.7, edgecolor='black')
-                ax.add_patch(patch)
-
-                # Add holes
-                for interior in geom.interiors:
-                    hole_patch = patches.Polygon(list(interior.coords),
-                                                 facecolor='white', edgecolor='black')
-                    ax.add_patch(hole_patch)
-
-            elif isinstance(geom, MultiPolygon):
-                for poly in geom.geoms:
-                    patch = patches.Polygon(list(poly.exterior.coords),
-                                            facecolor=color, alpha=0.7, edgecolor='black')
-                    ax.add_patch(patch)
-
-                    for interior in poly.interiors:
-                        hole_patch = patches.Polygon(list(interior.coords),
-                                                     facecolor='white', edgecolor='black')
-                        ax.add_patch(hole_patch)
-
-        # Remove axes and make it tight
-        ax.set_aspect('equal')
-        ax.axis('off')
-        plt.tight_layout(pad=0)
-
-        # Convert to numpy array
-        buf = BytesIO()
-        plt.savefig(buf, format='png', bbox_inches='tight', pad_inches=0, dpi=100)
-        buf.seek(0)
-
-        # Load as PIL image and convert to numpy
-        pil_img = PIL.Image.open(buf)
-        img_array = np.array(pil_img)
-
-        plt.close(fig)
-        buf.close()
-
-        # Resize to exact dimensions if needed
-        if img_array.shape[:2] != (height, width):
-            pil_img = PIL.Image.fromarray(img_array)
-            pil_img = pil_img.resize((width, height), PIL.Image.Resampling.LANCZOS)
-            img_array = np.array(pil_img)
-
-        return img_array
-
 
 def representation_face_count(ifc_element) -> int:
     """Faces declared in an element's representation, before any conversion.
