@@ -859,10 +859,17 @@ def get_elements_and_shapes(model, ifc_path, filter_fn=None, filter_expr=None, m
 
         # Collect results
         element_id_to_mesh = {el_id: mesh for el_id, mesh, _ in results}
-        for _, _, (slow, skipped, failed) in results:
+
+        # Which elements the face ceiling refused, so they are not also counted as
+        # failures below (#36). The worker's own diagnostics are the authority -
+        # a refusal and a failure both come back as a bare None.
+        ceiling_skipped = set()
+        for el_id, _, (slow, skipped, failed) in results:
             slow_elements.extend(slow)
             face_skipped.extend(skipped)
             failed_elements.extend(failed)
+            if skipped:
+                ceiling_skipped.add(el_id)
 
         for element in elements:
             if element.Representation is None:
@@ -871,7 +878,7 @@ def get_elements_and_shapes(model, ifc_path, filter_fn=None, filter_expr=None, m
             if mesh is not None:
                 valid_elements.append(element)
                 meshes.append(mesh)
-            else:
+            elif element.id() not in ceiling_skipped:
                 failed_count += 1
     else:
         # Sequential processing (for small sets or when parallel is disabled)
@@ -887,11 +894,17 @@ def get_elements_and_shapes(model, ifc_path, filter_fn=None, filter_expr=None, m
                 skipped_count += 1
                 continue
 
+            # process_ifc_element returns None for two unrelated outcomes: an
+            # element the face ceiling refused, and one whose conversion threw.
+            # Counting both as failures reported a 585-element --max-faces skip
+            # as an 83% failure rate (#36). The processor already recorded which
+            # it was, so ask it rather than guess.
+            refused_before = len(processor.skipped_elements)
             mesh = processor.process_ifc_element(element, model)
             if mesh is not None:
                 valid_elements.append(element)
                 meshes.append(mesh)
-            else:
+            elif len(processor.skipped_elements) == refused_before:
                 failed_count += 1
 
             # Update progress bar
@@ -920,7 +933,7 @@ def get_elements_and_shapes(model, ifc_path, filter_fn=None, filter_expr=None, m
     if face_skipped:
         total_faces = sum(faces for faces, _ in face_skipped)
         print(f"   ⏭  Skipped (over --max-faces): {len(face_skipped)} "
-              f"({total_faces:,} faces not converted)")
+              f"({pct(len(face_skipped))}, {total_faces:,} faces not converted)")
 
     # The point of #26: a count on its own is not a diagnosis. Failures group
     # tightly by reason - 64 of matchbox's 64 are the same one - so the reasons
