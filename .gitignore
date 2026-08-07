@@ -187,6 +187,13 @@ examples/data/private/
 # come after the `*.ifc` line to take effect.
 !examples/data/open/*.ifc
 
+# The synthetic IFC4 fixture is the second exception. It carries no licensing
+# question at all - we generate it, from examples/make_synthetic_ifc4.py - and it
+# exists to reach IfcPolygonalFaceSet, which none of the models above contain
+# (#20). Committed for the same reason: `git clone && pytest` should cover it
+# with no generation step.
+!examples/data/synthetic/*.ifc
+
 # Obsidian vault config (personal, not part of the project)
 .obsidian/
 
