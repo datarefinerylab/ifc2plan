@@ -104,7 +104,6 @@ so you can fix the line without going back to `--overview`.
 | `--max-faces` | Skip unusually detailed elements to save time — see [If a run is slow](#if-a-run-is-slow) | none |
 | `--max-elements` | Stop after this many elements. Useful for a quick trial run on a big file | none |
 | `--slow-element-seconds` | Report any element that takes longer than this to convert | `5.0` |
-| `--skip-failed` | Keep going when an element fails instead of stopping | off |
 
 ## What you get
 
@@ -200,6 +199,20 @@ The model needs `IfcBuildingStorey` elements — `--overview` will show you whet
 **Rooms aren't coloured**
 You need `--colored-spaces` *and* `--naming-conversion`, and the room names in the model
 have to match rows in your CSV.
+
+**It says some conversions failed**
+The run keeps going regardless — a failed element is left out of that floor plan and the
+rest are still drawn. It also tells you what it dropped and why:
+
+```
+   ❌ Why 4 conversion(s) failed:
+          4  no Body representation (Axis only)
+             e.g. IfcWall #1001928 'dakopstand'
+```
+
+`no Body representation` is the usual answer, and it is a property of the model rather
+than a problem with the tool: the element was drawn as a centreline only, with no solid
+shape attached, so there is nothing for a floor plan to cut through.
 
 **It ran out of memory**
 A model takes roughly six times its file size in memory, so a 200 MB file wants about

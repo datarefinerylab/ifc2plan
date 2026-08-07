@@ -205,3 +205,19 @@ def test_missing_file_exits_nonzero(tmp_path):
     result = _run_cli(str(tmp_path / "nothing-here*.ifc"), "--overview")
 
     assert result.returncode != 0
+
+
+def test_skip_failed_is_rejected_rather_than_ignored(tmp_path):
+    """
+    #34: --skip-failed was accepted and read by nothing, so a script passing it
+    got a byte-identical run and no sign the flag did nothing. Being told the
+    argument does not exist is the honest outcome; silently accepting it is not.
+
+    Pinned as a test because "removed" and "accepted but ignored" are
+    indistinguishable from the outside, which is exactly how it survived.
+    """
+    result = _run_cli(str(tmp_path / "whatever.ifc"), "--overview", "--skip-failed")
+
+    assert result.returncode != 0
+    assert "unrecognized arguments" in result.stderr
+    assert "--skip-failed" in result.stderr
