@@ -1,9 +1,17 @@
-# Open-access test models
+# Test models
+
+Every model the suite runs against beyond the Schependomlaan example: five sourced
+open-access IFC4 files, and one generated fixture. Both exist because the committed
+example is IFC2X3 and declares millimetres, and neither is enough on its own — the
+sourced models buy realism, the generated one buys code paths no real open model
+reaches. The split is explained under
+[What these do *not* cover](#what-these-do-not-cover).
 
 Issue #21 asks for redistributable IFC4 models, and notes that the work is the licence
 check rather than the search. This is the result of that check: five models from two
 sources, with terms verified at the source, plus the sources that were looked at and
-rejected.
+rejected. Issue #20 is the generated fixture, in
+[The synthetic fixture](#the-synthetic-fixture).
 
 They live in `examples/data/open/` and are **committed** — 19 MB, on top of the 47 MB
 Schependomlaan. `git clone && pytest` covers IFC4, IFC4X3 and metre-declared models with
@@ -74,13 +82,57 @@ search for the entity inside `.ifc` files returns component libraries and viewer
 assets, not buildings.
 
 So the primary branch of `representation_face_count` stays unreachable from real open
-data, and issue #20's synthetic fixture is still the way to reach it. That is the honest
+data, and issue #20's synthetic fixture is the way to reach it. That is the honest
 division of labour between the two issues: #20 buys the branch, these buy the realism.
+That fixture now exists — see [The synthetic fixture](#the-synthetic-fixture) below.
 
 Two smaller gaps worth naming: none of these models has the non-manifold multi-solid
 door geometry behind the `process=False` rule, and none has a storey whose geometry sits
 far from its declared elevation — the `04 dak` case. Schependomlaan remains the only
 fixture with either.
+
+## The synthetic fixture
+
+`examples/data/synthetic/synthetic-ifc4.ifc` (257 KB, committed) is the other half of
+the story above. It is not sourced, it is **generated** — by
+`examples/make_synthetic_ifc4.py`, which is committed alongside it so the file can be
+regenerated and reviewed rather than being an opaque blob:
+
+```bash
+python examples/make_synthetic_ifc4.py           # write it
+python examples/make_synthetic_ifc4.py --check   # confirm it matches the script
+```
+
+`tests/test_synthetic_model.py::test_fixture_matches_its_generator` runs that `--check`,
+so the file and the script cannot drift apart.
+
+The comparison is over entities with reals normalised to 9 significant digits, not over
+bytes — the header carries a timestamp and an ifcopenshell version, and float rendering
+differs between the two ifcopenshell releases the CI matrix pins. Both are differences in
+the bytes and neither is a difference in the fixture. A coordinate moved by a micrometre
+still fails, and `--check` names the first differing entity and prints both lines.
+
+It is a two-storey, 6.0 × 4.0 m room — four walls per storey, three spaces — declaring
+metres. Deliberately shaped to reach what nothing else committed does:
+
+| what | why it is there |
+|---|---|
+| `IfcPolygonalFaceSet`, one wall subdivided to **3,456 faces** | the branch no open model reaches; the gap to the 6-face walls gives `--max-faces` an unambiguous threshold to sit in |
+| `IfcMappedItem` wrapping a **tessellation** | every mapped item in the five open models wraps an extruded solid, so `count_items` recursing into a tessellation was stub-only |
+| two storeys, 0.0 m and 3.0 m | section-height selection has a choice to make |
+| `IfcSpace`s carrying **only** a `FootPrint` curve | the shape 94 of Schependomlaan's 100 spaces have (#4) — giving them a `Body` would misrepresent real data |
+
+**No licence question**: we wrote it, so it carries none of the terms the models above do.
+
+### What it is not
+
+Clean by construction, and therefore not realistic. It cannot reproduce the authoring
+quirks that are the actual source of every geometry bug fixed in this repo — welded
+vertices tearing multi-solid elements apart, or storeys whose geometry sits nowhere near
+their declared elevation — because we would have to know to put them there. It buys
+reachability of code paths, not realism. That is why it complements the open-access
+models rather than replacing them, and why the right outcome is for a real IFC4 model
+carrying `IfcPolygonalFaceSet` to make it removable one day.
 
 ## Licences
 
@@ -157,10 +209,11 @@ That discovery has a failure mode worth knowing about — if the files ever stop
 reaching a checkout, the tests over them would turn into *skips*, and CI would stay green
 while testing nothing. `test_all_open_models_are_present` exists to make that a failure
 instead, and `test_no_undocumented_open_models` refuses a model that was dropped in
-without its licence being recorded here.
+without its licence being recorded here. `test_fixture_is_present` does the same job for
+the synthetic file.
 
-The full suite is **163 passed / 6 skipped** in about 32 seconds locally, up from 134
-passed before these models — roughly 4 seconds more, well inside `timeout-minutes: 15`.
+The full suite is **222 passed / 7 skipped / 2 xfailed** in about 48 seconds locally,
+well inside `timeout-minutes: 15`.
 
 ## Adding another one later
 

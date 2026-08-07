@@ -30,14 +30,27 @@ Research tool; outputs feed downstream ML / analysis work and a planned publicat
 - There **is** CI and a test suite: `.github/workflows/tests.yml` runs pytest on every
   PR and on pushes to `main`, matrixed over Python 3.9 and 3.13 (deliberately different
   `ifcopenshell` versions — 3.9 pins 0.8.4.post1, the last release supporting it).
-  `tests/` holds 9 files that collect to ~158 tests, driven by `pytest.ini`; run them
-  with `pytest` from the repo root (146 passed / 10 skipped / 2 xfailed on a machine
-  without the private models). Markers: `example` (committed public model),
-  `private` (gitignored KAAN models, auto-skips), `slow` (full run over a large model). `tests/conftest.py` puts `src/ifc2plan` on `sys.path` so tests
+  `tests/` holds 13 files that collect to ~230 tests, driven by `pytest.ini`; run them
+  with `pytest` from the repo root (222 passed / 7 skipped / 2 xfailed in ~48 s on a
+  machine without the private models). Markers: `example` (committed public model),
+  `open_model` (committed open-access IFC4 set), `synthetic` (the generated IFC4
+  fixture), `private` (gitignored KAAN models, auto-skips), `slow` (full run over a
+  large model). `tests/conftest.py` puts `src/ifc2plan` on `sys.path` so tests
   import exactly the way the CLI does, and it discovers models rather than hardcoding
   them — the Schependomlaan example is always present, and tests over the gitignored
   KAAN client data skip cleanly when it's absent.
-- Example data: `examples/data/Shependomlaan/IFC Schependomlaan.ifc` (47 MB, committed).
+- Test models — three committed sets, all covered in `docs/test-models.md`:
+  - `examples/data/Shependomlaan/IFC Schependomlaan.ifc` (47 MB) — **IFC2X3,
+    millimetres**. The realistic one: non-manifold door geometry, storeys whose geometry
+    sits far from their datum.
+  - `examples/data/open/` (5 files, 19 MB) — licence-checked open-access **IFC4/IFC4X3**,
+    four declaring **metres**. Sourced, so `examples/fetch_open_models.py` records each
+    URL and SHA-256.
+  - `examples/data/synthetic/synthetic-ifc4.ifc` (257 KB) — **generated** by
+    `examples/make_synthetic_ifc4.py`. The only committed model containing
+    `IfcPolygonalFaceSet` (#20); see "Known Weak Spots".
+  All three are the deliberate exception to `.gitignore`'s `*.ifc` rule. Their
+  `!` negations must stay after it to take effect.
 
 ## Layout
 
@@ -116,6 +129,16 @@ Dependencies are in `requirements.txt` (ifcopenshell, shapely, trimesh, numpy, p
 
 Useful priors when debugging — verify before acting on any of them:
 
+- **Schema decides which branches are even reachable, and a stub cannot tell you.**
+  `IfcPolygonalFaceSet` does not exist in IFC2X3 — `by_type` *raises* on it there rather
+  than returning `[]` — and `IfcFacetedBrep` dominates IFC2X3 while being absent from the
+  IFC4 models. So a body-type branch can be dead on every fixture and alive on every
+  client model. This has bitten once for real: #19, where `representation_face_count`
+  ignored breps and `--max-faces` was silently inert across the whole of IFC2X3, with the
+  `FakeItem` stubs in `test_slow_elements.py` passing throughout — they assert the code
+  does what we *believe* the schema does. When adding a body type there, check it against
+  both schemas and add a fixture that carries it. `examples/make_synthetic_ifc4.py` is
+  where to add one; it is generated, so anything it needs to contain can just be written.
 - **Units are the trap in anything touching heights** (the rest of issue #3 is fixed —
   see "Section Height" above). `IfcBuildingStorey.Elevation` is in raw **model units**
   (6000 here), while ifcopenshell hands back geometry already converted to **metres**
