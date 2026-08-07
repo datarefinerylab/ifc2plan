@@ -464,13 +464,54 @@ def representation_face_count(ifc_element) -> int:
         return 0
 
 
-def _describe(ifc_element, faces: int) -> str:
-    """Short identifier for log lines: class, id, name, tessellation size."""
+def _describe_element(ifc_element) -> str:
+    """Class, id and name - the part of a log line that identifies the element."""
     try:
         name = (getattr(ifc_element, "Name", None) or "").split(":")[0][:50]
-        return f"{ifc_element.is_a()} #{ifc_element.id()} {name!r} ({faces:,} faces)"
+        return f"{ifc_element.is_a()} #{ifc_element.id()} {name!r}"
     except (AttributeError, RuntimeError):
-        return f"element ({faces:,} faces)"
+        return "element"
+
+
+def _describe(ifc_element, faces: int) -> str:
+    """Short identifier for log lines: class, id, name, tessellation size."""
+    return f"{_describe_element(ifc_element)} ({faces:,} faces)"
+
+
+def representation_identifiers(ifc_element) -> set:
+    """The RepresentationIdentifiers an element carries, e.g. {'Axis', 'Body'}."""
+    try:
+        representation = ifc_element.Representation
+        if representation is None:
+            return set()
+        return {rep.RepresentationIdentifier
+                for rep in (representation.Representations or ())
+                if rep.RepresentationIdentifier}
+    except (AttributeError, RuntimeError):
+        return set()
+
+
+def failure_reason(ifc_element, exception) -> str:
+    """
+    Why an element could not be converted, in a sentence worth reading (#26).
+
+    The raw ifcopenshell message is a 200-character dump of the STEP line, which
+    tells a reader nothing they can act on. The one classification that matters
+    is whether there was ever a solid to section: an element carrying no `Body`
+    representation cannot produce plan geometry no matter what the sectioning
+    code does, and that accounts for every failure observed so far - the
+    Axis/Curve2D `dakopstand` walls on the example model, and the
+    Axis/MappedRepresentation beams on matchbox.
+
+    Anything else falls back to the exception's first sentence rather than
+    pretending to a diagnosis.
+    """
+    identifiers = representation_identifiers(ifc_element)
+    if identifiers and "Body" not in identifiers:
+        return f"no Body representation ({'/'.join(sorted(identifiers))} only)"
+
+    detail = str(exception).split(".")[0].strip()
+    return detail[:80] or type(exception).__name__
 
 
 def _report(message: str):
@@ -498,6 +539,9 @@ class IFCGeometryProcessor:
         self.max_faces = max_faces
         self.slow_elements = []   # (elapsed, description) over the threshold
         self.skipped_elements = []  # (faces, description) refused by max_faces
+        # (description, reason) for #26: a failure used to leave nothing behind
+        # but an increment of a counter.
+        self.failed_elements = []
 
     def _get_settings(self):
         """Get or create cached geometry settings"""
@@ -531,6 +575,12 @@ class IFCGeometryProcessor:
                 description = _describe(ifc_element, faces)
                 self.slow_elements.append((elapsed, description))
                 _report(f"   ⏱  Slow element: {description} took {elapsed:.1f}s")
+
+    def _record_failure(self, ifc_element, exception):
+        """Keep what a failed conversion was, so the run can name it later."""
+        self.failed_elements.append(
+            (_describe_element(ifc_element), failure_reason(ifc_element, exception))
+        )
 
     def _convert(self, ifc_element, ifc_file) -> Optional[trimesh.Trimesh]:
         try:
@@ -571,11 +621,11 @@ class IFCGeometryProcessor:
 
             return mesh
 
-        except RuntimeError as e:
-            # Skip problematic elements silently
-            return None
         except Exception as e:
-            # Skip other errors silently
+            # Still skipped, but no longer silently (#26). The two arms this
+            # replaces were byte-identical and RuntimeError is an Exception, so
+            # splitting them only made the discarding look deliberate.
+            self._record_failure(ifc_element, e)
             return None
 
     def extract_floor_plan_at_height(self, ifc_elements, ifc_file, height: float,

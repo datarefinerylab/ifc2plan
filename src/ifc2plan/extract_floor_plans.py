@@ -216,8 +216,6 @@ Run this script by its path, as above - it is not installed as a command.
                             "available memory as well as core count")
     speed.add_argument("--max-elements", type=int, default=None,
                        help="Stop after this many elements per storey (for trying things out)")
-    speed.add_argument("--skip-failed", action="store_true",
-                       help="Continue processing even if some elements fail")
     speed.add_argument("--slow-element-seconds", type=float, default=SLOW_ELEMENT_SECONDS,
                        help=f"Report any element taking longer than this to convert "
                             f"(default: {SLOW_ELEMENT_SECONDS})")

@@ -745,11 +745,13 @@ def _process_element_worker(element_id):
 
     del _worker_processor.slow_elements[:]
     del _worker_processor.skipped_elements[:]
+    del _worker_processor.failed_elements[:]
 
     mesh = _worker_processor.process_ifc_element(element, _worker_model)
 
     diagnostics = (list(_worker_processor.slow_elements),
-                   list(_worker_processor.skipped_elements))
+                   list(_worker_processor.skipped_elements),
+                   list(_worker_processor.failed_elements))
 
     return element_id, mesh, diagnostics
 
@@ -831,9 +833,10 @@ def get_elements_and_shapes(model, ifc_path, filter_fn=None, filter_expr=None, m
     failed_count = 0
     skipped_count = 0
 
-    # Diagnostics for #13, gathered from whichever path runs below.
+    # Diagnostics for #13 and #26, gathered from whichever path runs below.
     slow_elements = []
     face_skipped = []
+    failed_elements = []
 
     if parallel and len(elements) > 10:  # Only use parallel for larger sets
         # Parallel processing
@@ -856,9 +859,17 @@ def get_elements_and_shapes(model, ifc_path, filter_fn=None, filter_expr=None, m
 
         # Collect results
         element_id_to_mesh = {el_id: mesh for el_id, mesh, _ in results}
-        for _, _, (slow, skipped) in results:
+
+        # Which elements the face ceiling refused, so they are not also counted as
+        # failures below (#36). The worker's own diagnostics are the authority -
+        # a refusal and a failure both come back as a bare None.
+        ceiling_skipped = set()
+        for el_id, _, (slow, skipped, failed) in results:
             slow_elements.extend(slow)
             face_skipped.extend(skipped)
+            failed_elements.extend(failed)
+            if skipped:
+                ceiling_skipped.add(el_id)
 
         for element in elements:
             if element.Representation is None:
@@ -867,13 +878,14 @@ def get_elements_and_shapes(model, ifc_path, filter_fn=None, filter_expr=None, m
             if mesh is not None:
                 valid_elements.append(element)
                 meshes.append(mesh)
-            else:
+            elif element.id() not in ceiling_skipped:
                 failed_count += 1
     else:
         # Sequential processing (for small sets or when parallel is disabled)
         processor = IFCGeometryProcessor(slow_seconds=slow_seconds, max_faces=max_faces)
         slow_elements = processor.slow_elements
         face_skipped = processor.skipped_elements
+        failed_elements = processor.failed_elements
 
         progress_bar = progress(elements, desc="Converting elements")
 
@@ -882,11 +894,17 @@ def get_elements_and_shapes(model, ifc_path, filter_fn=None, filter_expr=None, m
                 skipped_count += 1
                 continue
 
+            # process_ifc_element returns None for two unrelated outcomes: an
+            # element the face ceiling refused, and one whose conversion threw.
+            # Counting both as failures reported a 585-element --max-faces skip
+            # as an 83% failure rate (#36). The processor already recorded which
+            # it was, so ask it rather than guess.
+            refused_before = len(processor.skipped_elements)
             mesh = processor.process_ifc_element(element, model)
             if mesh is not None:
                 valid_elements.append(element)
                 meshes.append(mesh)
-            else:
+            elif len(processor.skipped_elements) == refused_before:
                 failed_count += 1
 
             # Update progress bar
@@ -915,7 +933,21 @@ def get_elements_and_shapes(model, ifc_path, filter_fn=None, filter_expr=None, m
     if face_skipped:
         total_faces = sum(faces for faces, _ in face_skipped)
         print(f"   ⏭  Skipped (over --max-faces): {len(face_skipped)} "
-              f"({total_faces:,} faces not converted)")
+              f"({pct(len(face_skipped))}, {total_faces:,} faces not converted)")
+
+    # The point of #26: a count on its own is not a diagnosis. Failures group
+    # tightly by reason - 64 of matchbox's 64 are the same one - so the reasons
+    # are listed with a count and one named example each, rather than one line
+    # per element. A model where 400 fail should not print 400 lines.
+    if failed_elements:
+        by_reason = Counter(reason for _, reason in failed_elements)
+        example = {}
+        for description, reason in failed_elements:
+            example.setdefault(reason, description)
+        print(f"\n   ❌ Why {len(failed_elements)} conversion(s) failed:")
+        for reason, count in by_reason.most_common():
+            print(f"      {count:>5}  {reason}")
+            print(f"             e.g. {example[reason]}")
 
     # The point of #13: a storey that takes half an hour should say where the time
     # went. Four elements out of 669 were 99% of one storey's conversion time and
