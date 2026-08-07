@@ -150,12 +150,25 @@ Useful priors when debugging — verify before acting on any of them:
   reason; `open_fragments` / `unusable_rings` are genuine per-solid totals. Keep that split
   if you add a counter, and it is a usable before/after metric for element loss.
 - **Don't build a mesh with `trimesh.Trimesh(verts, faces)` and default processing.** Trimesh welds vertices that share a position, and in an IFC element those are the corners where separate solids touch (door leaf against frame). Welding fuses them into one torn, non-manifold surface — door 670101 went from 20 watertight solids and 0 broken faces to 68 fragments and 234 broken faces. `process=False` plus sectioning each solid separately is why door/window geometry is now correct; both are load-bearing, and `process=False` alone changes nothing because trimesh welds again when building a section path.
-- **`_convert` swallows every exception and returns `None`** (`geometry_engine.py:574-579`),
-  so a failed element is counted in the `❌ Failed conversions` line and nowhere else —
-  no id, no type, no reason (issue #26). On the example this hides 4 elements of 3,573,
-  all `IfcWall 'dakopstand'` on `04 dak` carrying only an `Axis`/`Curve2D` representation
-  with no `Body`. Note the asymmetry: the space path *does* report reasons —
-  `space_outline_polygon` returns `(polygon, reason)` and the caller prints it.
+- **A failed conversion is a symptom, not a cause — always the same one so far: no
+  `Body` representation, nothing to section.** `_convert` (`geometry_engine.py`)
+  catches the exception and calls `self._record_failure`, which names the element
+  and classifies the reason (issue #26, fixed in `cacdce6` — the mesh path now
+  reports the way `space_outline_polygon`'s `(polygon, reason)` always has). On the
+  example this is 4 `IfcWall 'dakopstand'` elements on `04 dak`
+  (`Axis`/`Curve2D`, no `Body`); on the private `matchbox` model it's 64
+  `IfcBeam` elements (`Axis`/`MappedRepresentation`, no `Body`) — see #44 for
+  whether that geometry is recoverable rather than just correctly named.
+- **`to_wkt()` at the one call site in `FloorWKTFormatter.process`
+  (`formatters.py:600`) rounds to 6 decimal places by default, and nothing
+  re-validates after that rounding.** `space_outline_polygon` validates and
+  repairs (`buffer(0)`) *before* returning, so a polygon can pass that check,
+  then have rounding collapse or cross two close vertices into a
+  self-intersecting ring on the way to disk — the run log says "100% valid"
+  while the CSV carries an invalid geometry. Rare (1 of ~214,000 rows checked
+  across the public and private datasets) but real, found on first contact with
+  production data rather than any committed fixture. See #43 for the
+  reproduction and candidate fixes.
 - Output is organised per storey only; there is no per-unit/per-dwelling grouping
   (issue #27). The example is 10 apartments, so a storey file mixes 2–3 of them. The
   dwelling is in `IfcSpace.Name` as `<dwelling>.<room>` (`7.06`), with `A0`–`A3` as
