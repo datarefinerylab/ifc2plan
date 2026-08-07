@@ -1,5 +1,6 @@
 # ifc2plan
 
+[![tests](https://github.com/datarefinerylab/ifc2plan/actions/workflows/tests.yml/badge.svg)](https://github.com/datarefinerylab/ifc2plan/actions/workflows/tests.yml)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -20,7 +21,7 @@ writes:
 </p>
 
 <p align="center"><em>The ground floor of the example building included in this
-repository — produced by step 3 below, unedited. Click it for full size.</em></p>
+repository — produced by step 4 below, unedited. Click it for full size.</em></p>
 
 ## Contents
 
@@ -32,6 +33,7 @@ repository — produced by step 3 below, unedited. Click it for full size.</em><
 - [Drawing styles](#drawing-styles)
 - [Troubleshooting](#troubleshooting)
 - [If a run is slow](#if-a-run-is-slow)
+- [License](#license)
 - [Origin](#origin)
 
 ## Install
@@ -60,7 +62,16 @@ storeys and how many elements each one has, and tells you the storey numbers you
 python src/ifc2plan/extract_floor_plans.py "examples/data/Shependomlaan/IFC Schependomlaan.ifc" --overview
 ```
 
-**2. Draw one floor plan.** Storey `1` is the ground floor of this building — step 1 told
+**2. Export the table, no image.** CSV is the default output, so this is the shortest
+useful command there is — just a storey and a file to translate room names with. Every
+wall, door, and room comes out as one row, with its outline as WKT geometry.
+
+```bash
+python src/ifc2plan/extract_floor_plans.py "examples/data/Shependomlaan/IFC Schependomlaan.ifc" \
+  --storey 1 --naming-conversion naming_conversion.csv
+```
+
+**3. Draw one floor plan.** Storey `1` is the ground floor of this building — step 1 told
 you that.
 
 ```bash
@@ -68,8 +79,8 @@ python src/ifc2plan/extract_floor_plans.py "examples/data/Shependomlaan/IFC Sche
   --storey 1 --formatter image
 ```
 
-**3. Draw it with rooms colored by type, and get the data too.** This is the drawing at
-the top of this page.
+**4. Draw it with rooms colored by type, and get the data too.** This is the drawing at
+the top of this page — image and CSV together, in one run.
 
 ```bash
 python src/ifc2plan/extract_floor_plans.py "examples/data/Shependomlaan/IFC Schependomlaan.ifc" \
@@ -85,13 +96,13 @@ until you know the settings are right. Leave `--storey` off to do every storey.
 
 `--storey` takes more than one value, so you rarely have to run the command twice:
 
-| You type | You get |
-|----------|---------|
-| `--storey 1` | just that storey |
-| `--storey 0,2` | those two |
-| `--storey 1-3` | storeys 1, 2 and 3 |
-| `--storey begane` | every storey whose name contains "begane" — copy it off the `--overview` list |
-| `--storey all` | the whole building (same as leaving it off) |
+| Value | Selects |
+|-------|---------|
+| `1` | just that storey |
+| `0,2` | those two |
+| `1-3` | storeys 1, 2 and 3 |
+| `begane` | every storey whose name contains "begane" — copy it off the `--overview` list |
+| `all` | the whole building (same as leaving it off) |
 
 If you mistype it, the command stops and prints the storeys the model actually has, so
 you can fix the line without going back to `--overview`.
@@ -152,7 +163,7 @@ The four most useful ones, up top; everything else follows.
 ## What you get
 
 Files are named after the storey as the model names it, inside a folder named after the
-model. Running example 3 above gives you:
+model. Running example 4 above gives you:
 
 ```
 output/
@@ -301,6 +312,11 @@ count at all, so they are always converted.
 
 </details>
 
+## License
+
+MIT — see [LICENSE](LICENSE) for the full text and both copyright notices. `ifc2plan` is
+a derivative work of a fork; see [Origin](#origin) below for how it got here.
+
 ## Origin
 
 `ifc2plan` began as a fork of [byildiz/BatchPlan](https://github.com/byildiz/BatchPlan)
@@ -325,3 +341,5 @@ the original copyright is retained — see [LICENSE](LICENSE).
 ---
 
 **Built with:** [IfcOpenShell](https://ifcopenshell.org/) • [Trimesh](https://trimsh.org/) • [Shapely](https://shapely.readthedocs.io/)
+
+Found a bug or have a feature idea? [Open an issue](https://github.com/datarefinerylab/ifc2plan/issues).
