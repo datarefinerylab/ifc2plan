@@ -104,9 +104,13 @@ python examples/make_synthetic_ifc4.py --check   # confirm it matches the script
 ```
 
 `tests/test_synthetic_model.py::test_fixture_matches_its_generator` runs that `--check`,
-so the file and the script cannot drift apart. (The header carries a timestamp and an
-ifcopenshell version, so two runs are never byte-identical; the comparison is over the
-entities, which is the reproducibility that matters.)
+so the file and the script cannot drift apart.
+
+The comparison is over entities with reals normalised to 9 significant digits, not over
+bytes — the header carries a timestamp and an ifcopenshell version, and float rendering
+differs between the two ifcopenshell releases the CI matrix pins. Both are differences in
+the bytes and neither is a difference in the fixture. A coordinate moved by a micrometre
+still fails, and `--check` names the first differing entity and prints both lines.
 
 It is a two-storey, 6.0 × 4.0 m room — four walls per storey, three spaces — declaring
 metres. Deliberately shaped to reach what nothing else committed does:

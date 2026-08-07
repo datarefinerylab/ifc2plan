@@ -40,6 +40,7 @@ than replacing them.
 """
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -276,6 +277,41 @@ def build():
     return f
 
 
+# STEP reals always carry a decimal point and STEP integers never do, so this matches
+# reals only and leaves entity ids and the 1-based face indices alone.
+_REAL = re.compile(r"-?\d+\.\d*(?:[eE][-+]?\d+)?")
+
+
+def _canonical(entity_string):
+    """
+    An entity's STEP line with every real written to a fixed precision.
+
+    Comparing the raw lines is too strict to put in CI. How ifcopenshell renders a
+    float is its business and it varies between the two versions the matrix pins -
+    3.9 is stuck on 0.8.4.post1, 3.13 gets the current release - so the same model
+    round-trips to `0.3` under one and to something differing in the last bit under
+    the other. That is a real difference in the bytes and no difference at all in
+    the fixture, and a check that fails on it teaches people to ignore it.
+
+    9 significant digits is far below the noise and far above anything this file
+    means: its coordinates are metres of a 6 m room, so a genuine change moves a
+    wall by millimetres at least. A changed coordinate, count, type or enum still
+    fails.
+    """
+    return _REAL.sub(lambda m: "%.9g" % float(m.group()), entity_string)
+
+
+def _first_difference(committed, generated):
+    """The first line that differs, as a two-line report. Empty if they agree."""
+    for i, (was, now) in enumerate(zip(committed, generated)):
+        if _canonical(was) != _canonical(now):
+            return f"  first difference, entity {i + 1}:\n    committed: {was}\n    generated: {now}"
+    if len(committed) != len(generated):
+        return (f"  same prefix, different lengths: {len(committed)} committed, "
+                f"{len(generated)} generated")
+    return ""
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     parser.add_argument("--check", action="store_true",
@@ -296,10 +332,11 @@ def main(argv=None):
             print(f"missing: {target}", file=sys.stderr)
             return 1
         committed = [str(e) for e in ifcopenshell.open(str(target))]
-        if committed != generated:
+        difference = _first_difference(committed, generated)
+        if difference:
             print(f"{target.name} differs from what this script generates "
                   f"({len(committed)} entities committed, {len(generated)} generated). "
-                  f"Re-run without --check to update it.", file=sys.stderr)
+                  f"Re-run without --check to update it.\n{difference}", file=sys.stderr)
             return 1
         print(f"{target.name}: {len(generated)} entities, matches this script")
         return 0

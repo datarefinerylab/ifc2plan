@@ -87,6 +87,13 @@ def test_fixture_matches_its_generator():
     A fixture whose generator no longer generates it is worse than no generator:
     it reads as reviewable and reproducible while being neither, and the next
     person to regenerate gets a large unexplained diff.
+
+    The comparison is over entities with reals normalised to 9 significant digits,
+    not over bytes. The header carries a timestamp and an ifcopenshell version, and
+    float rendering differs between the two ifcopenshell releases the CI matrix
+    pins - this test failed on the 3.13 leg for exactly that before the
+    normalisation went in. Both are differences in the bytes and neither is a
+    difference in the fixture. A coordinate moved by a micrometre still fails.
     """
     result = subprocess.run(
         [sys.executable, str(REPO_ROOT / "examples" / "make_synthetic_ifc4.py"), "--check"],
