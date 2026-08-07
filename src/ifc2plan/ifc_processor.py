@@ -1103,7 +1103,14 @@ def process_storeys(context):
                 ifc_path,
                 filter_fn=storey_filter,
                 max_elements=context.get("max_elements"),
-                parallel=context.get("parallel", True),
+                # False, matching the CLI (--parallel is store_true) and
+                # get_elements_and_shapes' own signature. A caller that builds a
+                # context without this key - a test, a notebook, a future entry
+                # point - must not get a process pool it did not ask for: the pool
+                # is sized against memory precisely because every worker holds its
+                # own copy of the parsed model, so opting someone in by accident on
+                # a large file is how a run starts swapping.
+                parallel=context.get("parallel", False),
                 slow_seconds=context.get("slow_seconds", SLOW_ELEMENT_SECONDS),
                 max_faces=context.get("max_faces"),
             )
